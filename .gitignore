@@ -1,0 +1,49 @@
+# Binaries
+gateway
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Environment
+.env
+.env.local
+
+# Dependencies
+vendor/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+dist/
+build/
+*.log
+
+# Coverage
+coverage.out
+*.coverprofile
+
+# Python
+test/venv/
+test/__pycache__/
+test/*.pyc
+*.pyo
+*.pyd
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Yaml config
+ha-config.yaml
+

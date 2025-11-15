@@ -1,0 +1,92 @@
+version: '3.8'
+
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ha-voice-gateway
+    restart: unless-stopped
+    
+    # Environment configuration
+    environment:
+      # Home Assistant (required for tool execution)
+      - HA_URL=${HA_URL:-http://homeassistant:8123}
+      - HA_TOKEN=${HA_TOKEN}
+      
+      # Backend configuration
+      - BACKEND_TYPE=${BACKEND_TYPE:-mock}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.0-flash-exp}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-realtime-preview}
+      
+      # Wyoming server
+      - WYOMING_ADDR=0.0.0.0:10200
+      
+      # Audio settings
+      - AUDIO_SAMPLE_RATE=${AUDIO_SAMPLE_RATE:-16000}
+      - AUDIO_CHANNELS=${AUDIO_CHANNELS:-1}
+      - AUDIO_BITS_PER_SAMPLE=${AUDIO_BITS_PER_SAMPLE:-16}
+      
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_FORMAT=${LOG_FORMAT:-console}
+      
+      # Security
+      - HA_ALLOW_LIST=${HA_ALLOW_LIST}
+      
+      # Performance
+      - AUDIO_BUFFER_SIZE=${AUDIO_BUFFER_SIZE:-100}
+      - EVENT_BUFFER_SIZE=${EVENT_BUFFER_SIZE:-50}
+      
+      # Observability
+      - METRICS_ENABLED=${METRICS_ENABLED:-false}
+      - HEALTH_CHECK_ENABLED=${HEALTH_CHECK_ENABLED:-true}
+    
+    # Ports
+    ports:
+      - "10200:10200"  # Wyoming protocol
+      - "8080:8080"    # Health check (optional)
+      - "9090:9090"    # Metrics (optional)
+    
+    # Health check (disabled by default for lower resource usage)
+    # Uncomment if you need health monitoring
+    # healthcheck:
+    #   test: ["CMD", "/gateway", "--health-check"]
+    #   interval: 5m      # Reduced from 30s to 5min for idle efficiency
+    #   timeout: 3s
+    #   retries: 3
+    #   start_period: 5s
+    
+    # Resource limits (adjust based on your hardware)
+    # Uncomment to enforce limits
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '1.0'    # Max 1 CPU core
+    #       memory: 256M   # Max 256 MB RAM
+    #     reservations:
+    #       cpus: '0.1'    # Min 10% CPU
+    #       memory: 32M    # Min 32 MB RAM
+    
+    # Network
+    networks:
+      - ha-network
+    
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  ha-network:
+    name: ha-network
+    driver: bridge
+
+# Optional: Volume for persistent data
+# volumes:
+#   gateway-data:
+

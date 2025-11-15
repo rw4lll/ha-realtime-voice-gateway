@@ -1,0 +1,120 @@
+# Home Assistant Voice Gateway Configuration
+# This is the primary configuration file for HA integration.
+# Environment variables can override any setting here.
+
+home_assistant:
+  # Connection settings (can override with HA_URL, HA_TOKEN env vars)
+  url: "http://homeassistant.local:8123"
+  token: "your_long_lived_access_token_here"
+  timeout: "10s"  # HTTP request timeout
+  
+  # Autodiscovery configuration
+  # Discovery is always enabled - just configure what to discover
+  discovery:
+    # Domain filtering
+    domains:
+      # Include specific domains (empty = discover all except excluded)
+      # Examples: light, switch, climate, cover, media_player, fan, lock, vacuum
+      include: []
+      
+      # Exclude domains (takes precedence over include)
+      # Default excludes dangerous/internal domains for safety
+      exclude:
+        - automation
+        - script
+        - scene
+        - group
+        - zone
+        - person
+    
+    # Service filtering (applied AFTER domain filtering)
+    # Controls which discovered services can be called by the LLM
+    services:
+      # Filtering mode: "allow" or "deny"
+      mode: "allow"
+      
+      # Service patterns (supports wildcards)
+      # Examples:
+      #   - "light.*"              # All light services
+      #   - "switch.turn_*"        # Only turn_on/turn_off for switches
+      #   - "*.toggle"             # Toggle service across all domains
+      #   - "climate.set_*"        # All climate set services
+      patterns:
+        - "light.*"
+        - "switch.*"
+        - "climate.*"
+        - "cover.*"
+        - "media_player.media_*"
+        - "media_player.volume_*"
+        - "fan.*"
+        - "lock.*"
+    
+    # System prompt generation
+    prompt:
+      # Include list of entities in system prompt (helps LLM understand your devices)
+      include_entities: true
+      
+      # Include entity attributes (brightness, temperature, etc.)
+      # Warning: Increases prompt size significantly
+      include_attributes: false
+      
+      # Grouping strategy for entities in prompt
+      # Options: "domain" (group by light/switch/etc), "area", "floor", "none"
+      group_by: "domain"
+      
+      # Custom prompt template (optional)
+      # Available variables: {{.BasePrompt}}, {{.Entities}}, {{.EntityCount}}
+      template: ""
+
+# Backend configuration (can override with BACKEND_TYPE env var)
+backend:
+  type: "gemini"  # Options: mock, gemini, openai
+  
+  gemini:
+    api_key: ""  # Override with GEMINI_API_KEY env var
+    model: "gemini-2.0-flash-exp"
+    connect_timeout: "30s"
+    receive_timeout: "60s"
+    send_timeout: "10s"
+    max_retries: 3
+    retry_backoff: "1s"
+    max_sessions: 5
+
+# Wyoming protocol server
+wyoming:
+  address: "0.0.0.0:10200"
+
+# Audio settings
+audio:
+  buffer_size: 100  # Number of frames to buffer
+
+# Session settings
+session:
+  system_prompt: "You are a helpful voice assistant for Home Assistant. You can control lights, switches, climate, covers, and media players."
+
+# Logging
+logging:
+  level: "info"  # debug, info, warn, error
+  format: "console"  # console, json
+
+# Performance tuning
+performance:
+  audio_buffer_size: 100
+  event_buffer_size: 50
+
+# Observability
+observability:
+  metrics:
+    enabled: false
+    address: "0.0.0.0:9090"
+  health_check:
+    enabled: true
+    address: "0.0.0.0:8080"
+
+# Advanced: Entity filtering (future feature)
+# Allows filtering specific entities, not just domains
+# entity_filters:
+#   - pattern: "light.bedroom_*"
+#     action: "include"
+#   - pattern: "switch.dangerous_*"
+#     action: "exclude"

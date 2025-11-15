@@ -1,0 +1,64 @@
+# Git
+.git
+.gitignore
+
+# Documentation
+*.md
+!Readme.md
+docs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Build artifacts
+gateway
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Test cache
+.cache/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Logs
+*.log
+
+# Environment files (users should mount their own)
+.env
+.env.*
+!env.example
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Go
+vendor/
+*.sum.bak
+
+# Test coverage
+coverage.txt
+coverage.html
+*.cover
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
