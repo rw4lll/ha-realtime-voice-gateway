@@ -1,15 +1,15 @@
-# Git files
+# Git and version control
 .git
 .gitignore
 .gitattributes
 
-# Documentation
+# Documentation (except main README)
 *.md
 !Readme.md
 docs/
 CLAUDE.md
 
-# IDE and editor files
+# IDE and editors
 .vscode/
 .idea/
 *.swp
@@ -18,27 +18,57 @@ CLAUDE.md
 .DS_Store
 Thumbs.db
 
-# Build artifacts
+# Compiled binaries and build outputs (root level only)
 /gateway
-bin/
-dist/
-build/
+/bin
+/dist
 *.exe
 *.dll
 *.so
 *.dylib
-*.test
-*.out
 
-# Test files and cache
+# Test files
 test/
 tests/
 *_test.go
 testdata/
+*.test
+*.out
+
+# Cache and temporary files
 .cache/
 *.cover
 coverage.txt
 coverage.html
+tmp/
+temp/
+*.tmp
+*.log
+*.pid
+
+# Environment and config (keep example)
+.env
+.env.*
+!env.example
+ha-config.yaml
+
+# Go vendor and workspace
+vendor/
+go.work
+go.work.sum
+
+# CI/CD configurations
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# Docker files
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Misc
+LICENSE
 
 # Temporary files
 tmp/

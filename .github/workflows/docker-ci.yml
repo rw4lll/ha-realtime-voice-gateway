@@ -39,6 +39,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Debug - Check source files
+        run: |
+          echo "=== Repository structure ==="
+          find . -type f -name "*.go" | head -20
+          echo ""
+          echo "=== cmd/gateway content ==="
+          ls -la cmd/gateway/ || echo "ERROR: cmd/gateway not found!"
+          echo ""
+          echo "=== .dockerignore ==="
+          head -30 .dockerignore
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
