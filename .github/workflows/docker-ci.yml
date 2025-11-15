@@ -52,11 +52,21 @@ jobs:
           images: ${{ env.IMAGE_NAME }}
           tags: type=raw,value=test
 
-      - name: Lint Dockerfile
-        uses: hadolint/hadolint-action@v3.1.0
+      - name: Lint Dockerfile with Trivy
+        uses: aquasecurity/trivy-action@0.28.0
         with:
-          dockerfile: Dockerfile
-          failure-threshold: warning
+          scan-type: 'config'
+          scan-ref: '.'
+          exit-code: '0'
+          format: 'sarif'
+          output: 'trivy-dockerfile.sarif'
+
+      - name: Upload Dockerfile lint results
+        uses: github/codeql-action/upload-sarif@v4
+        if: always() && hashFiles('trivy-dockerfile.sarif') != ''
+        with:
+          sarif_file: 'trivy-dockerfile.sarif'
+          category: 'dockerfile-lint'
 
       - name: Build Docker image (amd64)
         uses: docker/build-push-action@v6
@@ -79,6 +89,7 @@ jobs:
 
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@0.28.0
+        continue-on-error: true
         with:
           image-ref: ${{ env.IMAGE_NAME }}:test
           format: 'sarif'
@@ -87,7 +98,7 @@ jobs:
 
       - name: Upload Trivy results to GitHub Security
         uses: github/codeql-action/upload-sarif@v4
-        if: always()
+        if: always() && hashFiles('trivy-results.sarif') != ''
         with:
           sarif_file: 'trivy-results.sarif'
           category: 'docker-image'

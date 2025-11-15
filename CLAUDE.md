@@ -7,7 +7,7 @@
 ## Project Overview
 
 **Purpose**: Low-latency (<500ms) voice bridge between HA Voice Preview devices and realtime LLMs (Gemini Live, OpenAI Realtime)  
-**Language**: Go 1.23+  
+**Language**: Go 1.25+  
 **Architecture**: Event-driven, channel-based, async tool execution
 
 ### Core Concept

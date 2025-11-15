@@ -3,7 +3,7 @@
 **Low-latency, conversational voice control for Home Assistant using Gemini Live or OpenAI Realtime API.**
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Go Version](https://img.shields.io/badge/go-1.24+-00ADD8.svg)](https://golang.org)
+[![Go Version](https://img.shields.io/badge/go-1.25+-00ADD8.svg)](https://golang.org)
 [![Docker](https://img.shields.io/badge/docker-multi--arch-blue.svg)](https://github.com/rw4lll/ha-realtime-voice-gateway/pkgs/container/ha-realtime-voice-gateway)
 [![CI](https://github.com/rw4lll/ha-realtime-voice-gateway/actions/workflows/docker-ci.yml/badge.svg)](https://github.com/rw4lll/ha-realtime-voice-gateway/actions/workflows/docker-ci.yml)
 
@@ -60,7 +60,7 @@ Assistant: [adjusts brightness while responding]
 
 - Home Assistant with Voice Preview device (or use laptop for testing)
 - [Gemini API key](https://aistudio.google.com/apikey) (free tier available)
-- Docker (recommended) or Go 1.23+
+- Docker (recommended) or Go 1.25+
 
 ### Install & Run
 
