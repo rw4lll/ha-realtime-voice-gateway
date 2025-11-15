@@ -93,8 +93,24 @@ jobs:
 
       - name: Test container
         run: |
-          # Test container can start
-          docker run --rm ${{ env.IMAGE_NAME }}:test --version || true
+          # Test container can start (run in background for 5 seconds)
+          echo "Starting container in background..."
+          CONTAINER_ID=$(docker run -d ${{ env.IMAGE_NAME }}:test)
+          echo "Container ID: $CONTAINER_ID"
+          
+          # Wait 5 seconds to see if it crashes immediately
+          sleep 5
+          
+          # Check if container is still running
+          if docker ps | grep -q $CONTAINER_ID; then
+            echo "✅ Container started successfully and is running"
+            docker logs $CONTAINER_ID
+            docker stop $CONTAINER_ID
+          else
+            echo "❌ Container exited unexpectedly"
+            docker logs $CONTAINER_ID
+            exit 1
+          fi
           
           # Inspect image
           docker images ${{ env.IMAGE_NAME }}:test --format "Size: {{.Size}}"
