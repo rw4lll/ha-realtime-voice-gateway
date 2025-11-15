@@ -41,8 +41,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     -o gateway \
     ./cmd/gateway
 
-# Verify the binary
-RUN file gateway && ls -lh gateway
+# Verify the binary was built
+RUN ls -lh gateway
 
 # Stage 2: Runtime
 FROM scratch
