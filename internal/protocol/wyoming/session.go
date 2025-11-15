@@ -20,6 +20,9 @@ type Session struct {
 	codec  *Codec
 	logger *zap.Logger
 
+	// Service information
+	serviceInfo *ServiceInfo
+
 	// Channels for audio streaming
 	AudioIn  chan []byte // Audio from device → gateway
 	AudioOut chan []byte // Audio from gateway → device
@@ -47,6 +50,7 @@ type SessionConfig struct {
 	EventBufferSize int
 	ReadTimeout     time.Duration
 	WriteTimeout    time.Duration
+	ServiceInfo     *ServiceInfo // Service capabilities for describe response
 }
 
 // NewSession creates a new Wyoming session
@@ -64,15 +68,16 @@ func NewSession(cfg SessionConfig) *Session {
 	}
 
 	sess := &Session{
-		ID:       cfg.ID,
-		conn:     cfg.Conn,
-		codec:    NewCodec(cfg.Conn),
-		logger:   cfg.Logger,
-		AudioIn:  make(chan []byte, cfg.AudioBufferSize),
-		AudioOut: make(chan []byte, cfg.AudioBufferSize),
-		Events:   make(chan *Event, cfg.EventBufferSize),
-		ctx:      ctx,
-		cancel:   cancel,
+		ID:          cfg.ID,
+		conn:        cfg.Conn,
+		codec:       NewCodec(cfg.Conn),
+		logger:      cfg.Logger,
+		serviceInfo: cfg.ServiceInfo,
+		AudioIn:     make(chan []byte, cfg.AudioBufferSize),
+		AudioOut:    make(chan []byte, cfg.AudioBufferSize),
+		Events:      make(chan *Event, cfg.EventBufferSize),
+		ctx:         ctx,
+		cancel:      cancel,
 	}
 
 	// Start goroutines to handle I/O
@@ -81,6 +86,73 @@ func NewSession(cfg SessionConfig) *Session {
 	go sess.writeLoop(cfg.WriteTimeout)
 
 	return sess
+}
+
+// sendDescribeResponse sends service capabilities in response to a describe request
+func (s *Session) sendDescribeResponse() error {
+	// Use configured service info or fallback to defaults
+	info := s.serviceInfo
+	if info == nil {
+		// Fallback to minimal default info if not configured
+		info = &ServiceInfo{
+			Name:        "wyoming-gateway",
+			Version:     "1.0.0",
+			Description: "Wyoming Protocol Gateway",
+		}
+		info.Attribution.Name = "Unknown"
+		info.Attribution.URL = "https://github.com"
+		info.Model.Name = "default-model"
+		info.Model.Description = "Default Model"
+		info.Model.Languages = []string{"en"}
+		info.Model.Version = "1.0"
+		info.Model.Attribution.Name = "Unknown"
+		info.Model.Attribution.URL = "https://github.com"
+	}
+
+	// Describe our capabilities following Wyoming protocol specification
+	// IMPORTANT: Wyoming protocol expects AsrProgram structure with "models" array
+	// Each AsrProgram represents a service (like a Wyoming server)
+	// Each AsrModel represents a model that service can use
+	describeEvent := DescribeResponseEvent(map[string]any{
+		"asr": []map[string]any{
+			{
+				// AsrProgram fields
+				"name":        info.Name,
+				"description": info.Description,
+				"attribution": map[string]string{
+					"name": info.Attribution.Name,
+					"url":  info.Attribution.URL,
+				},
+				"installed": true,
+				"version":   info.Version,
+				"models": []map[string]any{
+					{
+						// AsrModel fields
+						"name":        info.Model.Name,
+						"description": info.Model.Description,
+						"attribution": map[string]string{
+							"name": info.Model.Attribution.Name,
+							"url":  info.Model.Attribution.URL,
+						},
+						"installed": true,
+						"languages": info.Model.Languages,
+						"version":   info.Model.Version,
+					},
+				},
+				"supports_transcript_streaming": false,
+			},
+		},
+		"tts":    []map[string]any{},
+		"wake":   []map[string]any{},
+		"intent": []map[string]any{},
+		"handle": []map[string]any{},
+	})
+
+	if err := s.codec.WriteEvent(&describeEvent); err != nil {
+		return fmt.Errorf("write describe response: %w", err)
+	}
+
+	return nil
 }
 
 // readLoop continuously reads events from the device
@@ -122,6 +194,17 @@ func (s *Session) readLoop(timeout time.Duration) {
 					zap.String("session_id", s.ID),
 					zap.Error(err))
 				return
+			}
+
+			// Handle describe requests by sending our capabilities
+			if event.Type == EventDescribe {
+				if err := s.sendDescribeResponse(); err != nil {
+					s.logger.Error("failed to send describe response",
+						zap.String("session_id", s.ID),
+						zap.Error(err))
+				}
+				// Don't forward describe events to the application
+				continue
 			}
 
 			// Handle audio events

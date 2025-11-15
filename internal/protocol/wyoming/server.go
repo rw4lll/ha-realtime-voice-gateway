@@ -22,7 +22,8 @@ type Server struct {
 	onSession func(*Session) // Callback for new sessions
 
 	// Configuration
-	config ServerConfig
+	config      ServerConfig
+	serviceInfo *ServiceInfo
 
 	// Server state
 	ctx    context.Context
@@ -41,11 +42,37 @@ type ServerConfig struct {
 	ReadTimeout     time.Duration
 	WriteTimeout    time.Duration
 
+	// Service information for discovery
+	ServiceInfo *ServiceInfo
+
 	// Logging
 	Logger *zap.Logger
 
 	// Callbacks
 	OnSession func(*Session) // Called when a new session is created
+}
+
+// ServiceInfo describes the gateway service capabilities for Wyoming discovery
+type ServiceInfo struct {
+	Name        string // e.g., "ha-realtime-voice-gateway"
+	Version     string // e.g., "1.0.0"
+	Description string // Service description
+	Attribution struct {
+		Name string // Author name
+		URL  string // Project URL
+	}
+
+	// Model information (from backend)
+	Model struct {
+		Name        string   // e.g., "gemini-2.0-flash-exp"
+		Description string   // Model description
+		Languages   []string // Supported languages
+		Version     string   // Model version
+		Attribution struct {
+			Name string // Provider name (e.g., "Google")
+			URL  string // Provider URL
+		}
+	}
 }
 
 // NewServer creates a new Wyoming TCP server
@@ -65,12 +92,13 @@ func NewServer(cfg ServerConfig) *Server {
 	}
 
 	return &Server{
-		addr:      cfg.Address,
-		logger:    cfg.Logger,
-		onSession: cfg.OnSession,
-		config:    cfg,
-		ctx:       ctx,
-		cancel:    cancel,
+		addr:        cfg.Address,
+		logger:      cfg.Logger,
+		onSession:   cfg.OnSession,
+		config:      cfg,
+		serviceInfo: cfg.ServiceInfo,
+		ctx:         ctx,
+		cancel:      cancel,
 	}
 }
 
@@ -143,6 +171,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 		EventBufferSize: s.config.EventBufferSize,
 		ReadTimeout:     s.config.ReadTimeout,
 		WriteTimeout:    s.config.WriteTimeout,
+		ServiceInfo:     s.serviceInfo,
 	})
 
 	// Store session

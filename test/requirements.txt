@@ -1,5 +1,8 @@
 # Python dependencies for test scripts
 
+# Wyoming protocol library for validation
+wyoming>=1.5.0
+
 # Audio bridge test (laptop mic/speaker testing)
 pyaudio>=0.2.13
 

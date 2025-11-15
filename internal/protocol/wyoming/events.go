@@ -133,6 +133,16 @@ func StreamingStoppedEvent() Event {
 	}
 }
 
+// DescribeResponseEvent creates a describe response event with service capabilities
+// This describes what services the Wyoming server provides (STT, TTS, Intent, etc.)
+// According to Wyoming protocol: client sends "describe", server responds with "info"
+func DescribeResponseEvent(services map[string]any) Event {
+	return Event{
+		Type: EventInfo,
+		Data: services,
+	}
+}
+
 // Validate checks if the event is valid
 func (e *Event) Validate() error {
 	if e.Type == "" {

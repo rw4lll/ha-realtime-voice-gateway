@@ -237,15 +237,68 @@ func main() {
 		zap.String("session_mode", cfg.Session.Mode),
 		zap.Bool("auto_close", cfg.Session.AutoCloseAfterResponse))
 
+	// Build service info from backend capabilities for Wyoming discovery
+	caps := llmBackend.Capabilities()
+	serviceInfo := &wyoming.ServiceInfo{
+		Name:        "ha-realtime-voice-gateway",
+		Version:     "1.0.0", // TODO: Get from build/version package
+		Description: "Home Assistant Realtime Voice Gateway - Wyoming Protocol Interface",
+	}
+	serviceInfo.Attribution.Name = "Sergei Shitikov"
+	serviceInfo.Attribution.URL = "https://github.com/rw4lll/ha-realtime-voice-gateway"
+
+	// Populate model info from backend capabilities
+	serviceInfo.Model.Name = cfg.Backend.GeminiModel // Use config model name
+	if caps.Provider == "gemini" {
+		serviceInfo.Model.Description = "Google Gemini - Multimodal Live API"
+		serviceInfo.Model.Attribution.Name = "Google"
+		serviceInfo.Model.Attribution.URL = "https://ai.google.dev/gemini-api/docs/multimodal-live"
+		serviceInfo.Model.Version = "2.0"
+		// Gemini supports many languages
+		serviceInfo.Model.Languages = []string{"en", "ru", "de", "fr", "es", "it", "ja", "ko", "zh", "pt", "nl", "pl", "tr"}
+	} else {
+		// Generic fallback for other backends
+		serviceInfo.Model.Description = fmt.Sprintf("%s Model", caps.Provider)
+		serviceInfo.Model.Attribution.Name = caps.Provider
+		serviceInfo.Model.Attribution.URL = "https://github.com/rw4lll/ha-realtime-voice-gateway"
+		serviceInfo.Model.Version = "1.0"
+		serviceInfo.Model.Languages = []string{"en"}
+	}
+
+	logger.Info("Service info configured",
+		zap.String("name", serviceInfo.Name),
+		zap.String("version", serviceInfo.Version),
+		zap.String("model", serviceInfo.Model.Name),
+		zap.Int("languages", len(serviceInfo.Model.Languages)))
+
 	// Create Wyoming server
 	sttServer := wyoming.NewServer(wyoming.ServerConfig{
-		Address: cfg.Wyoming.Address,
-		Logger:  logger.With(zap.String("server", "Wyoming")),
+		Address:     cfg.Wyoming.Address,
+		Logger:      logger.With(zap.String("server", "Wyoming")),
+		ServiceInfo: serviceInfo,
 		OnSession: func(s *wyoming.Session) {
 			logger.Info("New Wyoming session connected",
 				zap.String("session_id", s.ID))
-			// Pass session to pipeline for handling
-			go pipe.HandleWyomingSession(s)
+
+			// Lazy pipeline initialization: wait for actual audio/commands
+			// before starting backend. This allows Home Assistant to discover
+			// services via describe handshake without spinning up Gemini sessions.
+			go func() {
+				for event := range s.Events {
+					if event.Type == wyoming.EventDescribe {
+						// Describe requests handled by session layer
+						continue
+					}
+
+					// Real command received - initialize pipeline now
+					logger.Info("Starting pipeline for session",
+						zap.String("session_id", s.ID),
+						zap.String("trigger_event", string(event.Type)))
+
+					pipe.HandleWyomingSession(s)
+					return
+				}
+			}()
 		},
 	})
 
@@ -255,8 +308,7 @@ func main() {
 	defer sttServer.Close()
 
 	// Log actual backend capabilities (not config file values)
-	backendCaps := llmBackend.Capabilities()
-	outputFormat := backendCaps.SupportedAudioFormats[0] // Primary format
+	outputFormat := caps.SupportedAudioFormats[0] // Primary format
 
 	logger.Info("Gateway ready",
 		zap.String("wyoming_addr", sttServer.Addr()),
