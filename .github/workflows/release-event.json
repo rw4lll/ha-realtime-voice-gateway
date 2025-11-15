@@ -1,0 +1,8 @@
+{
+  "_comment": "Mock event data for testing release workflow locally with 'act release -e release-event.json'",
+  "release": {
+    "tag_name": "v1.0.0",
+    "name": "Release 1.0.0",
+    "prerelease": false
+  }
+}

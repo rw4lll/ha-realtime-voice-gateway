@@ -2,9 +2,15 @@ version: '3.8'
 
 services:
   gateway:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    # Use pre-built multi-arch image from GitHub Container Registry
+    # For local development, uncomment the build section below
+    image: ghcr.io/rw4lll/ha-realtime-voice-gateway:latest
+    
+    # For local development: comment out 'image' above and uncomment below
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    
     container_name: ha-voice-gateway
     restart: unless-stopped
     

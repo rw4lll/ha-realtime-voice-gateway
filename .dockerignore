@@ -1,21 +1,28 @@
-# Git
+# Git files
 .git
 .gitignore
+.gitattributes
 
 # Documentation
 *.md
 !Readme.md
 docs/
+CLAUDE.md
 
-# IDE
+# IDE and editor files
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
+.DS_Store
+Thumbs.db
 
 # Build artifacts
 gateway
+bin/
+dist/
+build/
 *.exe
 *.dll
 *.so
@@ -23,42 +30,48 @@ gateway
 *.test
 *.out
 
-# Test cache
+# Test files and cache
+test/
+tests/
+*_test.go
+testdata/
 .cache/
+*.cover
+coverage.txt
+coverage.html
 
 # Temporary files
 tmp/
 temp/
 *.tmp
-
-# Logs
 *.log
+*.pid
 
 # Environment files (users should mount their own)
 .env
 .env.*
 !env.example
 
-# OS files
-.DS_Store
-Thumbs.db
+# Project yaml config
+ha-config.yaml
 
-# Go
+# Go specific
 vendor/
 *.sum.bak
-
-# Test coverage
-coverage.txt
-coverage.html
-*.cover
+go.work
+go.work.sum
 
 # CI/CD
 .github/
 .gitlab-ci.yml
 .travis.yml
 
-# Docker
-Dockerfile
-docker-compose.yml
+# Docker files (not needed in context)
+Dockerfile*
+docker-compose*.yml
 .dockerignore
+
+# Release and development guides
+LICENSE
+
 

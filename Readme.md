@@ -3,8 +3,9 @@
 **Low-latency, conversational voice control for Home Assistant using Gemini Live or OpenAI Realtime API.**
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Go Version](https://img.shields.io/badge/go-1.23+-00ADD8.svg)](https://golang.org)
-[![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://hub.docker.com)
+[![Go Version](https://img.shields.io/badge/go-1.24+-00ADD8.svg)](https://golang.org)
+[![Docker](https://img.shields.io/badge/docker-multi--arch-blue.svg)](https://github.com/rw4lll/ha-realtime-voice-gateway/pkgs/container/ha-realtime-voice-gateway)
+[![CI](https://github.com/rw4lll/ha-realtime-voice-gateway/actions/workflows/docker-ci.yml/badge.svg)](https://github.com/rw4lll/ha-realtime-voice-gateway/actions/workflows/docker-ci.yml)
 
 Works with **Home Assistant Voice Preview devices** — no reflashing required!
 
@@ -62,6 +63,37 @@ Assistant: [adjusts brightness while responding]
 - Docker (recommended) or Go 1.23+
 
 ### Install & Run
+
+**Option 1: Using Pre-built Docker Images (Recommended)**
+
+```bash
+# 1. Create docker-compose.yml
+cat > docker-compose.yml << 'EOF'
+version: '3.8'
+services:
+  gateway:
+    image: ghcr.io/rw4lll/ha-realtime-voice-gateway:latest
+    container_name: ha-voice-gateway
+    restart: unless-stopped
+    environment:
+      - HA_URL=http://homeassistant:8123
+      - HA_TOKEN=your_token_here
+      - GEMINI_API_KEY=your_key_here
+    ports:
+      - "10200:10200"
+EOF
+
+# 2. Edit with your credentials
+nano docker-compose.yml
+
+# 3. Start gateway
+docker-compose up -d
+
+# 4. Verify it's running
+curl http://localhost:8080/health
+```
+
+**Option 2: Build from Source**
 
 ```bash
 # 1. Clone and configure
@@ -153,16 +185,19 @@ See **[test/README.md](test/README.md)** for complete testing guide.
 ## 📚 Documentation
 
 ### User Guides
+- [Quick Start](#quick-start) - Get started in 5 minutes
 - [Configuration Guide](docs/CONFIGURATION.md) - Complete config reference with examples
 - [Autodiscovery Guide](docs/AUTODISCOVERY.md) - HA device discovery setup
 - [VAD Tuning Guide](docs/VAD_TUNING_GUIDE.md) - Voice activity detection tuning
-- [Docker Deployment](docs/DOCKER.md) - Production deployment guide
+- [Docker Deployment](docs/DOCKER.md) - Production deployment & multi-arch images
 - [Testing Guide](test/README.md) - Test without hardware
+- [Release Guide](RELEASING.md) - Creating releases with CI/CD
 
 ### Technical Documentation
 - [Architecture](docs/ARCHITECTURE.md) - System design & backend abstraction layer
 - [Security](docs/SECURITY.md) - Security features & best practices
 - [Troubleshooting](docs/TROUBLESHOOTING.md) - Common issues & solutions
+- [CI/CD Workflows](.github/workflows/README.md) - Automated builds & releases
 
 ### Additional Resources
 - [Wyoming Protocol Spec](https://github.com/rhasspy/wyoming)
@@ -230,7 +265,7 @@ go build -o gateway ./cmd/gateway
 - Context-based cancellation
 - Documentation for public APIs
 
-See **[Claude.md](Claude.md)** for detailed development guidelines.
+See **[Claude.md](CLAUDE.md)** for detailed development guidelines.
 
 ---
 
@@ -240,6 +275,8 @@ See **[Claude.md](Claude.md)** for detailed development guidelines.
 - **100+ tests** with comprehensive coverage
 - **Production-ready** at 8.5/10 readiness score
 - **Sub-second latency** in typical deployments
+- **Multi-arch Docker images** (amd64, arm64, armv7)
+- **Automated CI/CD** with GitHub Actions
 - **Multi-stage Docker build** (<20MB final image)
 
 ---

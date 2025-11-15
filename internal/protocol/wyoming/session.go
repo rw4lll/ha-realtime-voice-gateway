@@ -54,10 +54,10 @@ func NewSession(cfg SessionConfig) *Session {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	if cfg.AudioBufferSize == 0 {
-		cfg.AudioBufferSize = 100 // Default from Claude.md
+		cfg.AudioBufferSize = 100 // Default from CLAUDE.md
 	}
 	if cfg.EventBufferSize == 0 {
-		cfg.EventBufferSize = 50 // Default from Claude.md
+		cfg.EventBufferSize = 50 // Default from CLAUDE.md
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = zap.NewNop()

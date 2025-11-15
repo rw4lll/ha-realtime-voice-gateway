@@ -1,10 +1,34 @@
 # Docker Deployment Guide
 
-This guide explains how to deploy the Home Assistant Realtime Voice Gateway using Docker.
+This guide explains how to deploy the Home Assistant Realtime Voice Gateway using Docker with multi-architecture support.
+
+## 🏗️ Multi-Architecture Support
+
+Pre-built images are available for:
+- **linux/amd64** (x86_64) - Standard servers and desktops
+- **linux/arm64** (aarch64) - Raspberry Pi 4/5, Apple Silicon, AWS Graviton
+- **linux/arm/v7** (armhf) - Raspberry Pi 2/3, older ARM devices
+
+Images are automatically built via GitHub Actions on each release.
 
 ## Quick Start
 
-### Using Docker Compose (Recommended)
+### Using Pre-built Images (Recommended)
+
+Pull the latest official image:
+```bash
+docker pull ghcr.io/rw4lll/ha-realtime-voice-gateway:latest
+```
+
+Or use in docker-compose.yml:
+```yaml
+services:
+  gateway:
+    image: ghcr.io/rw4lll/ha-realtime-voice-gateway:latest
+    # ... rest of configuration
+```
+
+### Using Docker Compose (Local Build)
 
 1. **Clone the repository**
 ```bash
@@ -250,24 +274,78 @@ docker-compose build --no-cache
 docker-compose up -d
 ```
 
+## 🚀 CI/CD Automated Builds
+
+### Release Workflow
+
+When a new release is published on GitHub, multi-architecture images are automatically:
+1. Built for all supported platforms
+2. Tagged with version numbers (e.g., `1.0.0`, `1.0`, `1`, `latest`)
+3. Pushed to GitHub Container Registry (ghcr.io)
+4. Security scanned with Trivy
+5. Attested with SBOM and provenance
+
+### Version Tags
+
+| Release Type | Tag Example | Image Tags Created |
+|-------------|-------------|-------------------|
+| Stable | `v1.2.3` | `1.2.3`, `1.2`, `1`, `latest` |
+| Pre-release | `v1.2.3-beta.1` | `1.2.3-beta.1` only |
+
+Pre-releases do NOT update `latest` or major/minor tags.
+
+### Creating a Release
+
+1. Create and push a version tag:
+```bash
+git tag -a v1.0.0 -m "Release version 1.0.0"
+git push origin v1.0.0
+```
+
+2. Create GitHub Release from the tag
+
+3. Images are automatically built and published
+
+See `.github/workflows/docker-release.yml` for details.
+
 ## Building Custom Images
 
-### Build for different architectures
+### Build Locally (Single Architecture)
 
-**ARM64 (Raspberry Pi 4, Apple Silicon):**
 ```bash
-docker build --platform linux/arm64 -t ha-voice-gateway:arm64 .
+# Build for your current platform
+docker build -t ha-voice-gateway:dev .
 ```
 
-**ARM32 (Raspberry Pi 3):**
+### Multi-arch Build (Local)
+
 ```bash
-docker build --platform linux/arm/v7 -t ha-voice-gateway:armv7 .
+# Create buildx builder
+docker buildx create --name multiarch --use --bootstrap
+
+# Build for all platforms
+docker buildx build \
+  --platform linux/amd64,linux/arm64,linux/arm/v7 \
+  -t ha-voice-gateway:multiarch \
+  --load \
+  .
 ```
 
-### Multi-arch build
+### Build for Specific Architecture
+
+**ARM64 (Raspberry Pi 4/5, Apple Silicon):**
 ```bash
-docker buildx create --use
-docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 -t ha-voice-gateway:latest .
+docker buildx build --platform linux/arm64 -t ha-voice-gateway:arm64 --load .
+```
+
+**ARMv7 (Raspberry Pi 2/3):**
+```bash
+docker buildx build --platform linux/arm/v7 -t ha-voice-gateway:armv7 --load .
+```
+
+**AMD64 (Standard x86_64):**
+```bash
+docker buildx build --platform linux/amd64 -t ha-voice-gateway:amd64 --load .
 ```
 
 ## Backup and Restore
