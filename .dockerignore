@@ -19,7 +19,7 @@ CLAUDE.md
 Thumbs.db
 
 # Build artifacts
-gateway
+/gateway
 bin/
 dist/
 build/
