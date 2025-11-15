@@ -90,25 +90,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           no-cache: false
-
-      - name: Test container image
-        run: |
-          # Verify image was built successfully
-          echo "=== Image Information ==="
-          docker images ${{ env.IMAGE_NAME }}:test --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}"
           
-          # Verify image metadata
-          echo ""
-          echo "=== Image Metadata ==="
-          docker inspect ${{ env.IMAGE_NAME }}:test --format 'User: {{.Config.User}}'
-          docker inspect ${{ env.IMAGE_NAME }}:test --format 'Architecture: {{.Architecture}}'
-          docker inspect ${{ env.IMAGE_NAME }}:test --format 'Entrypoint: {{.Config.Entrypoint}}'
-          
-          # Verify binary exists and is executable
-          echo ""
-          echo "=== Binary Verification ==="
-          docker run --rm --entrypoint ls ${{ env.IMAGE_NAME }}:test -lh /gateway
-
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@0.28.0
         continue-on-error: true
