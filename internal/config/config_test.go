@@ -19,8 +19,8 @@ func TestLoad(t *testing.T) {
 	if cfg.Backend.Type != "mock" {
 		t.Errorf("Expected backend type 'mock', got '%s'", cfg.Backend.Type)
 	}
-	if cfg.Wyoming.Address != "0.0.0.0:10200" {
-		t.Errorf("Expected Wyoming address '0.0.0.0:10200', got '%s'", cfg.Wyoming.Address)
+	if cfg.WebSocket.Address != "0.0.0.0:8080" {
+		t.Errorf("Expected WebSocket address '0.0.0.0:8080', got '%s'", cfg.WebSocket.Address)
 	}
 	if cfg.Audio.BufferSize != 100 {
 		t.Errorf("Expected buffer size 100, got %d", cfg.Audio.BufferSize)
@@ -37,7 +37,8 @@ func TestLoad_WithEnvironment(t *testing.T) {
 	os.Setenv("GEMINI_API_KEY", "test-api-key")
 	os.Setenv("HA_URL", "http://homeassistant:8123")
 	os.Setenv("HA_TOKEN", "test-token")
-	os.Setenv("WYOMING_ADDR", "0.0.0.0:10201")
+	os.Setenv("WEBSOCKET_ADDR", "0.0.0.0:9090")
+	os.Setenv("WEBSOCKET_PATH", "/custom-stream")
 	os.Setenv("LOG_LEVEL", "debug")
 	defer clearEnv()
 
@@ -55,8 +56,11 @@ func TestLoad_WithEnvironment(t *testing.T) {
 	if cfg.HomeAssistant.URL != "http://homeassistant:8123" {
 		t.Errorf("Expected HA URL 'http://homeassistant:8123', got '%s'", cfg.HomeAssistant.URL)
 	}
-	if cfg.Wyoming.Address != "0.0.0.0:10201" {
-		t.Errorf("Expected Wyoming address '0.0.0.0:10201', got '%s'", cfg.Wyoming.Address)
+	if cfg.WebSocket.Address != "0.0.0.0:9090" {
+		t.Errorf("Expected WebSocket address '0.0.0.0:9090', got '%s'", cfg.WebSocket.Address)
+	}
+	if cfg.WebSocket.Path != "/custom-stream" {
+		t.Errorf("Expected WebSocket path '/custom-stream', got '%s'", cfg.WebSocket.Path)
 	}
 	if cfg.Logging.Level != "debug" {
 		t.Errorf("Expected log level 'debug', got '%s'", cfg.Logging.Level)
@@ -132,7 +136,7 @@ func TestValidate(t *testing.T) {
 			cfg: Config{
 				Backend: BackendConfig{Type: "mock"},
 				Audio:   AudioConfig{BufferSize: 100},
-				Session: SessionConfig{Mode: "turn_based"},
+				Session: SessionConfig{SafetyTimeout: 5 * time.Minute, SilenceTimeout: 3 * time.Second},
 				Logging: LoggingConfig{Level: "info", Format: "console"},
 			},
 			wantErr: false,
@@ -142,7 +146,7 @@ func TestValidate(t *testing.T) {
 			cfg: Config{
 				Backend: BackendConfig{Type: "gemini"},
 				Audio:   AudioConfig{BufferSize: 100},
-				Session: SessionConfig{Mode: "turn_based"},
+				Session: SessionConfig{SafetyTimeout: 5 * time.Minute, SilenceTimeout: 3 * time.Second},
 				Logging: LoggingConfig{Level: "info", Format: "console"},
 			},
 			wantErr: true,
@@ -153,7 +157,7 @@ func TestValidate(t *testing.T) {
 			cfg: Config{
 				Backend: BackendConfig{Type: "openai"},
 				Audio:   AudioConfig{BufferSize: 100},
-				Session: SessionConfig{Mode: "turn_based"},
+				Session: SessionConfig{SafetyTimeout: 5 * time.Minute, SilenceTimeout: 3 * time.Second},
 				Logging: LoggingConfig{Level: "info", Format: "console"},
 			},
 			wantErr: true,
@@ -164,7 +168,7 @@ func TestValidate(t *testing.T) {
 			cfg: Config{
 				Backend: BackendConfig{Type: "invalid"},
 				Audio:   AudioConfig{BufferSize: 100},
-				Session: SessionConfig{Mode: "turn_based"},
+				Session: SessionConfig{SafetyTimeout: 5 * time.Minute, SilenceTimeout: 3 * time.Second},
 				Logging: LoggingConfig{Level: "info", Format: "console"},
 			},
 			wantErr: true,
@@ -175,7 +179,7 @@ func TestValidate(t *testing.T) {
 			cfg: Config{
 				Backend: BackendConfig{Type: "mock"},
 				Audio:   AudioConfig{BufferSize: 100},
-				Session: SessionConfig{Mode: "turn_based"},
+				Session: SessionConfig{SafetyTimeout: 5 * time.Minute, SilenceTimeout: 3 * time.Second},
 				Logging: LoggingConfig{Level: "invalid", Format: "console"},
 			},
 			wantErr: true,
@@ -186,7 +190,7 @@ func TestValidate(t *testing.T) {
 			cfg: Config{
 				Backend: BackendConfig{Type: "mock"},
 				Audio:   AudioConfig{BufferSize: 100},
-				Session: SessionConfig{Mode: "turn_based"},
+				Session: SessionConfig{SafetyTimeout: 5 * time.Minute, SilenceTimeout: 3 * time.Second},
 				Logging: LoggingConfig{Level: "info", Format: "invalid"},
 			},
 			wantErr: true,
@@ -201,7 +205,7 @@ func TestValidate(t *testing.T) {
 					GeminiVADStartSensitivity: "medium",
 				},
 				Audio:   AudioConfig{BufferSize: 100},
-				Session: SessionConfig{Mode: "turn_based"},
+				Session: SessionConfig{SafetyTimeout: 5 * time.Minute, SilenceTimeout: 3 * time.Second},
 				Logging: LoggingConfig{Level: "info", Format: "console"},
 			},
 			wantErr: true,
@@ -415,7 +419,8 @@ func clearEnv() {
 		"GEMINI_VAD_PREFIX_PADDING_MS", "GEMINI_VAD_SILENCE_DURATION_MS",
 		"GEMINI_ACTIVITY_HANDLING", "GEMINI_TURN_COVERAGE",
 		"BACKEND_TEMPERATURE", "BACKEND_MAX_TOKENS",
-		"WYOMING_ADDR",
+		"WEBSOCKET_ADDR", "WEBSOCKET_PATH", "WEBSOCKET_MAX_BUFFER_SIZE",
+		"WEBSOCKET_READ_TIMEOUT", "WEBSOCKET_WRITE_TIMEOUT",
 		"AUDIO_SAMPLE_RATE", "AUDIO_CHANNELS", "AUDIO_BITS_PER_SAMPLE", "AUDIO_BUFFER_SIZE",
 		"SYSTEM_PROMPT",
 		"LOG_LEVEL", "LOG_FORMAT",

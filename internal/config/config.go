@@ -18,8 +18,8 @@ type Config struct {
 	// LLM Backend
 	Backend BackendConfig
 
-	// Wyoming Server
-	Wyoming WyomingConfig
+	// WebSocket Server
+	WebSocket WebSocketConfig
 
 	// Audio Settings
 	Audio AudioConfig
@@ -86,26 +86,30 @@ type BackendConfig struct {
 	MaxTokens   int
 }
 
-// WyomingConfig holds Wyoming server configuration.
-type WyomingConfig struct {
-	Address string // Listen address (e.g., "0.0.0.0:10200")
+// WebSocketConfig holds WebSocket server configuration.
+type WebSocketConfig struct {
+	Address       string // Listen address (e.g., "0.0.0.0:8080")
+	Path          string // WebSocket path (e.g., "/voice-stream")
+	MaxBufferSize int    // Max WebSocket frame size in bytes
+	ReadTimeout   int    // Read timeout in seconds
+	WriteTimeout  int    // Write timeout in seconds
 }
 
 // AudioConfig holds audio processing configuration.
 type AudioConfig struct {
 	BufferSize int // Number of audio frames to buffer
 	// Note: Audio formats (sample rate, channels, bits) are determined by:
-	//   - Input: Wyoming client's audio-start event
+	//   - Input: WebSocket client (16kHz, 16-bit, mono PCM)
 	//   - Output: Backend's native format (from Capabilities())
 	// No configuration needed - formats auto-negotiate!
 }
 
 // SessionConfig holds session management configuration.
 type SessionConfig struct {
-	SystemPrompt           string // Default system prompt for LLM
-	Mode                   string // "turn_based" or "continuous"
-	AutoCloseAfterResponse bool   // Auto-close session after LLM response (turn-based mode)
-	ResponseTimeoutMs      int    // Max milliseconds to wait for response before auto-close
+	SystemPrompt   string        // Default system prompt for LLM
+	SafetyTimeout  time.Duration // Max session duration (safety limit)
+	SilenceTimeout time.Duration // Silence duration before ending conversation
+	AudioBufferMs  int           // Audio buffering before playback (ms)
 }
 
 // LoggingConfig holds logging configuration.
@@ -190,17 +194,21 @@ func Load() (*Config, error) {
 			Temperature:                0.7,
 			MaxTokens:                  4096,
 		},
-		Wyoming: WyomingConfig{
-			Address: "0.0.0.0:10200",
+		WebSocket: WebSocketConfig{
+			Address:       "0.0.0.0:8080",
+			Path:          "/voice-stream",
+			MaxBufferSize: 32768, // 32KB max frame
+			ReadTimeout:   60,
+			WriteTimeout:  10,
 		},
 		Audio: AudioConfig{
 			BufferSize: 100,
 		},
 		Session: SessionConfig{
-			SystemPrompt:           "You are a helpful voice assistant for Home Assistant. You can control lights, switches, climate, covers, and media players.",
-			Mode:                   "turn_based", // Default: close session after each response
-			AutoCloseAfterResponse: true,
-			ResponseTimeoutMs:      30000, // 30 seconds max response time
+			SystemPrompt:   "You are a helpful voice assistant for Home Assistant. You can control lights, switches, climate, covers, and media players.",
+			SafetyTimeout:  5 * time.Minute, // 5 min max session duration
+			SilenceTimeout: 5 * time.Second, // 5s silence before ending (allows multi-turn conversations)
+			AudioBufferMs:  100,             // 100ms audio buffer (reduced for lower latency)
 		},
 		Logging: LoggingConfig{
 			Level:  "info",
@@ -258,12 +266,16 @@ func Load() (*Config, error) {
 		cfg.Backend.Temperature = getFloatEnv("BACKEND_TEMPERATURE", 0.7)
 		cfg.Backend.MaxTokens = getIntEnv("BACKEND_MAX_TOKENS", 4096)
 
-		cfg.Wyoming.Address = getEnv("WYOMING_ADDR", "0.0.0.0:10200")
+		cfg.WebSocket.Address = getEnv("WEBSOCKET_ADDR", "0.0.0.0:8080")
+		cfg.WebSocket.Path = getEnv("WEBSOCKET_PATH", "/voice-stream")
+		cfg.WebSocket.MaxBufferSize = getIntEnv("WEBSOCKET_MAX_BUFFER_SIZE", 32768)
+		cfg.WebSocket.ReadTimeout = getIntEnv("WEBSOCKET_READ_TIMEOUT", 60)
+		cfg.WebSocket.WriteTimeout = getIntEnv("WEBSOCKET_WRITE_TIMEOUT", 10)
 		cfg.Audio.BufferSize = getIntEnv("AUDIO_BUFFER_SIZE", 100)
 		cfg.Session.SystemPrompt = getEnv("SYSTEM_PROMPT", "You are a helpful voice assistant for Home Assistant. You can control lights, switches, climate, covers, and media players.")
-		cfg.Session.Mode = getEnv("SESSION_MODE", "turn_based")
-		cfg.Session.AutoCloseAfterResponse = getBoolEnv("SESSION_AUTO_CLOSE", true)
-		cfg.Session.ResponseTimeoutMs = getIntEnv("SESSION_RESPONSE_TIMEOUT_MS", 30000)
+		cfg.Session.SafetyTimeout = getDurationEnv("SESSION_SAFETY_TIMEOUT", 5*time.Minute)
+		cfg.Session.SilenceTimeout = getDurationEnv("SESSION_SILENCE_TIMEOUT", 5*time.Second)
+		cfg.Session.AudioBufferMs = getIntEnv("SESSION_AUDIO_BUFFER_MS", 100)
 		cfg.Logging.Level = getEnv("LOG_LEVEL", "info")
 		cfg.Logging.Format = getEnv("LOG_FORMAT", "console")
 		cfg.Performance.AudioBufferSize = getIntEnv("AUDIO_BUFFER_SIZE", 100)
@@ -327,9 +339,11 @@ func (c *Config) Validate() error {
 	}
 
 	// Validate session configuration
-	validSessionModes := map[string]bool{"turn_based": true, "continuous": true}
-	if !validSessionModes[c.Session.Mode] {
-		return fmt.Errorf("invalid SESSION_MODE: %s (must be 'turn_based' or 'continuous')", c.Session.Mode)
+	if c.Session.SafetyTimeout < time.Second {
+		return fmt.Errorf("SESSION_SAFETY_TIMEOUT must be at least 1 second")
+	}
+	if c.Session.SilenceTimeout < 0 {
+		return fmt.Errorf("SESSION_SILENCE_TIMEOUT must be non-negative")
 	}
 
 	if c.Backend.Type == "gemini" {

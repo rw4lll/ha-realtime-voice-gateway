@@ -23,7 +23,7 @@ type MetricsCollector struct {
 	SessionsTotal  atomic.Int64
 	SessionsActive atomic.Int64
 
-	// Audio deduplication metrics (for Gemini backend)
+	// Audio deduplication metrics (for backends with echo issues)
 	AudioFramesDuplicated atomic.Int64
 
 	// Multi-turn conversation metrics

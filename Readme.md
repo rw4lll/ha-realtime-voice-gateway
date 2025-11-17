@@ -1,24 +1,20 @@
 # Home Assistant Realtime Voice Gateway
 
-**Low-latency, conversational voice control for Home Assistant using Gemini Live or OpenAI Realtime API.**
+**Low latency voice control for Home Assistant using ESP32 devices and LLM streaming.**
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Go Version](https://img.shields.io/badge/go-1.25+-00ADD8.svg)](https://golang.org)
-[![Docker](https://img.shields.io/badge/docker-multi--arch-blue.svg)](https://github.com/rw4lll/ha-realtime-voice-gateway/pkgs/container/ha-realtime-voice-gateway)
-[![CI](https://github.com/rw4lll/ha-realtime-voice-gateway/actions/workflows/docker-ci.yml/badge.svg)](https://github.com/rw4lll/ha-realtime-voice-gateway/actions/workflows/docker-ci.yml)
-
-Works with **Home Assistant Voice Preview devices** — no reflashing required!
 
 ---
 
 ## 🚀 What Is This?
 
-A voice gateway that enables **true realtime, conversational voice control** for Home Assistant. Instead of the traditional STT → Conversation → TTS pipeline, this streams audio directly to/from LLMs, providing:
+A voice gateway that enables **true realtime, conversational voice control** for Home Assistant. Instead of the traditional STT → Conversation → TTS pipeline, this streams audio directly between your ESP32 device and an LLM (Gemini, OpenAI, etc.), providing:
 
-- ⚡ **Sub-second latency** - Natural conversation speed
+- ⚡ **Low latency** - Instant responses, feels like talking to a person
 - 🎙️ **Full-duplex audio** - Interrupt the assistant anytime (barge-in)
-- 🤖 **Smart home control** - LLMs can call Home Assistant services  
-- 🔌 **Zero hardware changes** - Works with existing HA Voice Preview devices
+- 🤖 **Smart home control** - LLM can call Home Assistant services as tools
+- 🔌 **ESP32 Voice devices** - Works with modified streaming firmware
 - 🔄 **Automatic discovery** - No manual tool configuration needed
 
 **Example conversation:**
@@ -32,39 +28,75 @@ Assistant: [adjusts brightness while responding]
 
 ---
 
-## ✨ Features
+## ✨ Key Features
 
 ### 🎯 For Users
-- Natural conversations with instant responses and barge-in support
-- Auto-discovers all Home Assistant devices and services
-- Test without hardware using laptop mic/speakers
-- Works with existing HA Voice Preview devices
+- **Natural conversations** with instant responses and barge-in support
+- **Auto-discovers** all Home Assistant devices and services
+- **Test without hardware** using laptop mic/speakers
+- **Works with ESP32 devices** running modified streaming firmware
 
 ### 🛠️ For Developers  
-- Pluggable backends (Gemini, OpenAI, Anthropic, local models)
-- Event-driven architecture for realtime audio + tool calling
-- Production-ready with retry logic, timeouts, and error handling
-- Comprehensive test suite (100+ tests)
+- **Pluggable backends** (Gemini, OpenAI, Anthropic, local models)
+- **Event-driven architecture** for realtime audio + tool calling
+- **Production-ready** with retry logic, timeouts, and error handling
+- **Comprehensive test suite** (100+ tests)
 
 ### 🔒 Security
-- Domain allow-lists and entity deny-lists
-- Voice confirmation for sensitive actions
-- Rate limiting and audit logging
-- Read-only mode option
+- **Domain allow-lists** and entity deny-lists
+- **Service filtering** - control exactly what LLM can do
+- **Audit logging** - track all actions
+- **Configurable timeouts** - safety controls
+
+---
+
+## 🏗️ How It Works
+
+```
+[Your ESP32 Device]
+       │
+       │ WebSocket (ws://gateway:8080/voice-stream)
+       │ Raw PCM Audio + JSON control
+       ↓
+[This Gateway]
+   ├─> [Gemini/OpenAI/etc.] ← Streaming LLM
+   └─> [Home Assistant API]  ← Tool execution (lights, switches, etc.)
+```
+
+**The gateway:**
+1. Accepts WebSocket connections from ESP32 devices
+2. Streams audio to/from LLM backend (Gemini, OpenAI, etc.)
+3. Manages conversation state (listening → thinking → speaking → done)
+4. Executes Home Assistant tool calls
+5. Handles interruptions and full-duplex conversations
+
+---
+
+## 📋 Prerequisites
+
+- **Home Assistant** with Long-Lived Access Token
+- **ESP32 Voice device** with modified streaming firmware
+  - *Or use laptop mic/speakers for testing*
+- **LLM API Key:**
+  - [Gemini API Key](https://aistudio.google.com/apikey) ✅ **Free tier available!**
+  - OpenAI API Key (coming soon)
+- **Docker** (recommended) or Go 1.25+
+
+---
+
+## 🆚 When to Use This?
+
+### **Use This Gateway If:**
+- You have ESP32 devices with modified streaming firmware
+- You want ultra-low latency conversations (<500ms)
+- You want full-duplex, interruptible conversations (barge-in)
+- You want LLM to directly control HA without going through HA's pipeline
 
 ---
 
 ## 🚀 Quick Start
 
-### Prerequisites
-
-- Home Assistant with Voice Preview device (or use laptop for testing)
-- [Gemini API key](https://aistudio.google.com/apikey) (free tier available)
-- Docker (recommended) or Go 1.25+
-
-### Install & Run
-
-**Option 1: Using Pre-built Docker Images (Recommended)**
+### Option 1: Docker (Recommended)
 
 ```bash
 # 1. Create docker-compose.yml
@@ -76,226 +108,228 @@ services:
     container_name: ha-voice-gateway
     restart: unless-stopped
     environment:
+      # Home Assistant
       - HA_URL=http://homeassistant:8123
-      - HA_TOKEN=your_token_here
-      - GEMINI_API_KEY=your_key_here
+      - HA_TOKEN=your_long_lived_token_here
+      
+      # LLM Backend (Gemini example)
+      - BACKEND_TYPE=gemini
+      - GEMINI_API_KEY=your_gemini_api_key_here
+      
+      # WebSocket Server (optional customization)
+      - WEBSOCKET_ADDR=0.0.0.0:8080
+      - WEBSOCKET_PATH=/voice-stream
     ports:
-      - "10200:10200"
+      - "8080:8080"
+    networks:
+      - homeassistant
 EOF
 
-# 2. Edit with your credentials
+# 2. Edit credentials
 nano docker-compose.yml
 
 # 3. Start gateway
 docker-compose up -d
 
-# 4. Verify it's running
-curl http://localhost:8080/health
+# 4. Check logs
+docker-compose logs -f
 ```
 
-**Option 2: Build from Source**
+### Option 2: From Source
 
 ```bash
-# 1. Clone and configure
-git clone https://github.com/yourusername/ha-realtime-voice-gateway.git
+# 1. Clone repository
+git clone https://github.com/rw4lll/ha-realtime-voice-gateway.git
 cd ha-realtime-voice-gateway
-cp env.example .env
 
-# 2. Edit .env with your credentials
-nano .env  # Add GEMINI_API_KEY, HA_URL, HA_TOKEN
+# 2. Create .env file
+cat > .env << 'EOF'
+# Home Assistant
+HA_URL=http://homeassistant:8123
+HA_TOKEN=your_long_lived_token_here
 
-# 3. Start gateway
-docker-compose up -d
+# Backend (Gemini)
+BACKEND_TYPE=gemini
+GEMINI_API_KEY=your_api_key_here
 
-# 4. Verify it's running
-curl http://localhost:8080/health
+# WebSocket Server (optional customization)
+WEBSOCKET_ADDR=0.0.0.0:8080
+WEBSOCKET_PATH=/voice-stream
+EOF
+
+# 3. Build and run
+go build -o gateway ./cmd/gateway
+./gateway
 ```
 
-### Connect to Home Assistant
-
-Add to your `configuration.yaml`:
-
-```yaml
-wyoming:
-  - uri: tcp://YOUR_GATEWAY_IP:10200
-    name: "Realtime Gateway"
-
-assist_pipeline:
-  - name: "Realtime Voice"
-    stt_engine: wyoming.realtime_gateway
-    tts_engine: wyoming.realtime_gateway
-    conversation_agent: conversation.home_assistant
+**You should see:**
 ```
-
-Then: **Settings → Voice Assistants → Assist** → Select device → Assign "Realtime Voice" pipeline
-
-Test: **"OK Nabu, turn on the lights"** 🎉
-
-### Test Without Hardware
-
-```bash
-cd test/
-pip install pyaudio
-python3 audio_bridge.py
-# Speak into your laptop mic - you'll hear Gemini respond!
+INFO  Gateway ready  websocket_addr=0.0.0.0:8080
+INFO  WebSocket server listening. Waiting for device connections...
 ```
-
-See **[test/README.md](test/README.md)** for complete testing guide.
 
 ---
 
-## 📦 Implementation Status
+## 🔌 Connect Your ESP32 Device
 
-### Phase 1: MVP ✅ COMPLETE (100%)
+### 1. Flash Modified Firmware
 
-- ✅ Wyoming protocol server (TCP, bidirectional audio, session management)
-- ✅ Backend abstraction layer (event-driven interface)
-- ✅ Gemini Live backend (production-ready, comprehensive tests)
-- ✅ Pipeline layer (Wyoming ↔ Backend ↔ Home Assistant)
-- ✅ Home Assistant integration (autodiscovery, 12+ services, security)
-- ✅ Configuration management (YAML + env vars)
-- ✅ Docker deployment
+Follow the instructions at [ESP32 Streaming Firmware Guide](https://github.com/your-firmware-repo)
 
-### Phase 2: Production Hardening ✅ COMPLETE (100%)
+### 2. Configure Device
 
-- ✅ Retry logic with exponential backoff
-- ✅ Comprehensive timeout handling
-- ✅ Configurable session limits
-- ✅ Result caching
-- ✅ Graceful disconnect handling
-- ✅ Panic recovery
+In the device settings, set the gateway URL:
+```
+ws://YOUR_GATEWAY_IP:8080/voice-stream
+```
 
-### Phase 3: Advanced Features (In Progress)
+Example: `ws://192.168.1.100:8080/voice-stream`
 
-- [ ] OpenAI Realtime backend
-- [ ] Advanced VAD & barge-in
-- [ ] Prometheus metrics
-- [ ] Circuit breakers
+### 3. Enter Streaming Mode
 
-### Phase 4: Future
+**Press the button 4 times** to switch from standard HA Voice Preview mode to direct streaming mode.
 
-- [ ] Multi-user voice identification
-- [ ] Local/offline mode (Whisper + llama.cpp)
-- [ ] Conversation memory
-- [ ] Custom wake words
-- [ ] Backend auto-fallback
+### 4. Start Talking!
+
+The device will:
+- Send your voice to the gateway via WebSocket
+- Receive JSON state updates (`listening`, `thinking`, `speaking`, `done`)
+- Play AI responses in real-time
+
+---
+
+## ⚙️ Configuration
+
+### Essential Settings
+
+```bash
+# Home Assistant
+HA_URL=http://homeassistant:8123          # Your HA URL
+HA_TOKEN=your_long_lived_token            # Settings → Profile → Long-Lived Access Tokens
+
+# Backend
+BACKEND_TYPE=gemini                       # gemini | openai | mock
+GEMINI_API_KEY=your_key                   # Get from https://aistudio.google.com/apikey
+
+# WebSocket Server (always enabled)
+WEBSOCKET_ADDR=0.0.0.0:8080              # Listen on all interfaces
+WEBSOCKET_PATH=/voice-stream             # WebSocket endpoint
+```
+
+### Optional: Security & Filtering
+
+```bash
+# Limit which domains the LLM can control
+HA_AUTODISCOVERY_DOMAINS=light,switch,climate
+
+# Deny specific entities
+HA_AUTODISCOVERY_DENIED=lock.*,alarm_control_panel.*
+
+# Restrict to specific services
+HA_ALLOW_LIST=light.turn_on,light.turn_off,switch.toggle
+```
+
+### Optional: Performance Tuning
+
+```bash
+# Session timeouts
+SESSION_SAFETY_TIMEOUT=5m                 # Max conversation duration
+SESSION_SILENCE_TIMEOUT=3s                # End after 3s of silence
+SESSION_AUDIO_BUFFER_MS=500               # Audio buffering before playback
+```
+
+See **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)** for all options.
+
+---
+
+## 🔍 Troubleshooting
+
+### Gateway won't start
+
+```bash
+# Check logs
+docker-compose logs -f gateway
+
+# Common issues:
+# - Invalid HA_TOKEN → Check Settings → Profile → Long-Lived Access Tokens
+# - Can't reach Home Assistant → Use http://homeassistant:8123 in Docker network
+# - Invalid GEMINI_API_KEY → Get new key from https://aistudio.google.com/apikey
+```
+
+### Device won't connect
+
+```bash
+# Verify gateway is listening
+curl http://YOUR_GATEWAY_IP:8080/voice-stream
+# Should return "Upgrade Required" (WebSocket endpoint)
+
+# Check device firmware:
+# - Is streaming mode enabled? (4-click button)
+# - Is gateway URL correct? ws://IP:8080/voice-stream
+# - Is device on same network?
+```
+
+### LLM responds but doesn't control HA
+
+```bash
+# Check autodiscovery
+docker-compose logs gateway | grep "tools_discovered"
+# Should show: "Autodiscovery completed  tools_discovered=45"
+
+# Verify HA connection
+docker-compose logs gateway | grep "Home Assistant"
+# Should show: "Successfully connected to Home Assistant"
+```
+
+See **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** for more help.
+
+---
+
+## 🧪 Testing Without Hardware
+
+You can test the gateway using your laptop's mic/speakers:
+
+```bash
+cd test/
+pip install -r requirements.txt
+python3 audio_bridge.py
+```
+
+**Speak into your laptop mic - you'll hear the LLM respond!**
+
+See **[test/README.md](test/README.md)** for complete testing guide.
 
 ---
 
 ## 📚 Documentation
 
 ### User Guides
-- [Quick Start](#quick-start) - Get started in 5 minutes
-- [Configuration Guide](docs/CONFIGURATION.md) - Complete config reference with examples
-- [Autodiscovery Guide](docs/AUTODISCOVERY.md) - HA device discovery setup
-- [VAD Tuning Guide](docs/VAD_TUNING_GUIDE.md) - Voice activity detection tuning
-- [Docker Deployment](docs/DOCKER.md) - Production deployment & multi-arch images
-- [Testing Guide](test/README.md) - Test without hardware
-- [Release Guide](RELEASING.md) - Creating releases with CI/CD
+- **[Configuration Guide](docs/CONFIGURATION.md)** - All settings explained
+- **[Troubleshooting](docs/TROUBLESHOOTING.md)** - Common issues and fixes
+- **[Security Guide](docs/SECURITY.md)** - Securing your gateway
 
-### Technical Documentation
-- [Architecture](docs/ARCHITECTURE.md) - System design & backend abstraction layer
-- [Security](docs/SECURITY.md) - Security features & best practices
-- [Troubleshooting](docs/TROUBLESHOOTING.md) - Common issues & solutions
-- [CI/CD Workflows](.github/workflows/README.md) - Automated builds & releases
-
-### Additional Resources
-- [Wyoming Protocol Spec](https://github.com/rhasspy/wyoming)
-- [Gemini Live API Docs](https://ai.google.dev/gemini-api/docs/live-api)
-- [Home Assistant Voice](https://www.home-assistant.io/voice_control/)
+### Technical Docs
+- **[Architecture](docs/ARCHITECTURE.md)** - How it works internally
+- **[WebSocket Protocol](STREAMING_GATEWAY_PROTOCOL.md)** - Device communication spec
+- **[Development Guide](docs/DEVELOPMENT.md)** - Contributing to the project
 
 ---
 
-## 🏗️ Architecture Overview
+## 🤝 Community & Support
 
-```
-[HA Voice Device] ←→ [Gateway] ←→ [Gemini/OpenAI]
-                           ↓
-                  [Home Assistant]
-```
-
-**Key components:**
-- **Wyoming Server** - Handles HA device protocol (audio streaming)
-- **Backend Manager** - Abstracts LLM providers (Gemini, OpenAI)
-- **Audio Pipeline** - Format conversion, VAD, buffer management
-- **HA Integration** - Autodiscovery, tool execution, security policies
-
-**Key features:**
-- Event-driven architecture for async, non-blocking operations
-- Bidirectional audio streaming for natural conversations
-- Tool calling with 7-layer security (allow-lists, rate limiting, audit logs)
-- Wyoming protocol bridge (no device firmware changes needed)
-
-See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for detailed technical documentation.
+- **Issues:** [GitHub Issues](https://github.com/rw4lll/ha-realtime-voice-gateway/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/rw4lll/ha-realtime-voice-gateway/discussions)
+- **Home Assistant Forum:** [Community Thread](https://community.home-assistant.io/)
 
 ---
 
-## 🤝 Contributing
+## 🎯 Supported Backends
 
-Contributions welcome! Areas needing help:
-
-- **Backend implementations** (OpenAI, Anthropic, local models)
-- **Audio processing** (VAD tuning, transcoding, quality improvements)
-- **Testing** with various HA devices and configurations
-- **Documentation** (tutorials, examples, translations)
-- **Performance** (benchmarking and optimization)
-
-### Development Setup
-
-```bash
-git clone https://github.com/yourusername/ha-realtime-voice-gateway.git
-cd ha-realtime-voice-gateway
-go mod download
-
-# Run tests
-go test ./...
-
-# Run with hot reload
-go install github.com/cosmtrek/air@latest
-air
-
-# Build binary
-go build -o gateway ./cmd/gateway
-```
-
-**Code quality standards:**
-- Comprehensive tests for new features
-- Structured logging with zap
-- Thread-safe operations
-- Context-based cancellation
-- Documentation for public APIs
-
-See **[Claude.md](CLAUDE.md)** for detailed development guidelines.
-
----
-
-## 📊 Project Stats
-
-- **~7,200 lines** of production code
-- **100+ tests** with comprehensive coverage
-- **Production-ready** at 8.5/10 readiness score
-- **Sub-second latency** in typical deployments
-- **Multi-arch Docker images** (amd64, arm64, armv7)
-- **Automated CI/CD** with GitHub Actions
-- **Multi-stage Docker build** (<20MB final image)
-
----
-
-## 🙏 Credits
-
-Built for the Home Assistant community with inspiration from:
-
-- [Wyoming Protocol](https://github.com/rhasspy/wyoming) by Rhasspy
-- [Home Assistant](https://www.home-assistant.io/) voice infrastructure
-- [Gemini Live API](https://ai.google.dev/gemini-api/docs/live-api) by Google
-- [OpenAI Realtime API](https://platform.openai.com/docs/guides/realtime) by OpenAI
-- [Pion WebRTC](https://github.com/pion/webrtc) for Go
-
-### Related Projects
-
-- [Wyoming Satellite](https://github.com/rhasspy/wyoming-satellite) - Voice satellite implementation
-- [Piper](https://github.com/rhasspy/piper) - Fast local TTS
-- [Whisper.cpp](https://github.com/ggerganov/whisper.cpp) - Fast local STT
+| Backend | Status | Latency | Free Tier | Notes |
+|---------|--------|---------|-----------|-------|
+| **Gemini Live** | ✅ Production | ~200ms | ✅ **Yes** | ✨ Recommended - Free tier available! |
+| **OpenAI Realtime** | 🚧 Coming soon | ~250ms | ❌ No | Higher quality, paid only |
+| **Mock** | ✅ Testing | N/A | ✅ Yes | For development/testing |
 
 ---
 
@@ -305,22 +339,17 @@ Apache License 2.0 - See [LICENSE](LICENSE) for details.
 
 ---
 
-## 💬 Community
+## 🙏 Credits
 
-- [GitHub Issues](https://github.com/yourusername/ha-realtime-voice-gateway/issues)
-- [Home Assistant Discord](https://discord.gg/home-assistant)
-- [Home Assistant Forums](https://community.home-assistant.io/)
+- **ESP32 Firmware:** [Modified streaming firmware](https://github.com/your-firmware-repo)
+- **Home Assistant:** Smart home platform
+- **Gemini API:** LLM backend
+- **Wyoming Protocol:** Original inspiration (now replaced with WebSocket)
 
 ---
 
-**Status**: ✅ **Production Ready** - MVP Complete + Production Hardening
+**Status:** ✅ **Ready for Use**
 
-**What's Working**:
-- ✅ End-to-end voice pipeline (Device ↔ Gateway ↔ Gemini ↔ HA)
-- ✅ Automatic device discovery
-- ✅ Production-ready security
-- ✅ Comprehensive error handling
-- ✅ Docker deployment
-- ✅ Testing tools (no hardware required)
+Works with ESP32 devices running modified streaming firmware. Supports Gemini backend (free tier available). OpenAI support coming soon.
 
-**Try it today!** Get started in 5 minutes with the [Quick Start](#quick-start) guide.
+**Get Started:** [Jump to Quick Start](#-quick-start) ⬆️

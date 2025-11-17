@@ -79,10 +79,34 @@ backend:
     max_retries: 3
     retry_backoff: "1s"
     max_sessions: 5
+    
+    # VAD (Voice Activity Detection) settings
+    vad:
+      disabled: false
+      start_sensitivity: "high"  # low, medium, high
+      end_sensitivity: "low"     # low, medium, high
+      prefix_padding_ms: 300
+      silence_duration_ms: 500
+      activity_handling: "start_interrupts"  # start_interrupts, no_interruption
+      turn_coverage: "only_activity"  # only_activity, all_input
+  
+  openai:
+    api_key: ""  # Override with OPENAI_API_KEY env var
+    model: "gpt-4o-realtime-preview"
 
-# Wyoming protocol server
-wyoming:
-  address: "0.0.0.0:10200"
+# WebSocket server configuration
+# The WebSocket server is always enabled - it's the gateway's core purpose
+websocket:
+  address: "0.0.0.0:8080"
+  path: "/voice-stream"
+  max_buffer_size: 32768  # 32KB max frame size
+  read_timeout: 60        # seconds
+  write_timeout: 10       # seconds
+  
+  # TLS configuration (optional - for WSS)
+  # tls:
+  #   cert_file: "/path/to/cert.pem"
+  #   key_file: "/path/to/key.pem"
 
 # Audio settings
 audio:
@@ -90,7 +114,13 @@ audio:
 
 # Session settings
 session:
+  # Base system prompt (entities will be appended if autodiscovery enabled)
   system_prompt: "You are a helpful voice assistant for Home Assistant. You can control lights, switches, climate, covers, and media players."
+  
+  # Session timeouts and control
+  safety_timeout: "5m"      # Maximum session duration (safety cutoff)
+  silence_timeout: "3s"     # Silence after backend response before ending session
+  audio_buffer_ms: 500      # Buffer audio before playback starts (prevents premature start)
 
 # Logging
 logging:
@@ -109,7 +139,7 @@ observability:
     address: "0.0.0.0:9090"
   health_check:
     enabled: true
-    address: "0.0.0.0:8080"
+    address: "0.0.0.0:8081"
 
 # Advanced: Entity filtering (future feature)
 # Allows filtering specific entities, not just domains

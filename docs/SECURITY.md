@@ -179,16 +179,28 @@ func (e *Executor) ExecuteTool(call ToolCall, policy ToolPolicy) (interface{}, e
 
 ### TLS Support
 
-Optional TLS for Wyoming protocol connections:
+Optional TLS for WebSocket connections (WSS):
 
 ```yaml
 # ha-config.yaml
-wyoming:
+websocket:
   tls:
     enabled: true
     cert_file: "/path/to/cert.pem"
     key_file: "/path/to/key.pem"
 ```
+
+Or via environment variables:
+
+```bash
+WEBSOCKET_TLS_ENABLED=true
+WEBSOCKET_TLS_CERT=/path/to/cert.pem
+WEBSOCKET_TLS_KEY=/path/to/key.pem
+```
+
+**Device Configuration:**
+- With TLS: `wss://gateway:8080/voice-stream`
+- Without TLS: `ws://gateway:8080/voice-stream`
 
 ### Authentication
 
@@ -206,18 +218,15 @@ wyoming:
 **Recommended firewall rules:**
 
 ```bash
-# Allow Wyoming protocol (from HA devices only)
-sudo ufw allow from 192.168.1.0/24 to any port 10200 proto tcp
-sudo ufw allow from 192.168.1.0/24 to any port 10201 proto tcp
+# Allow WebSocket connections (from ESP32 devices only)
+sudo ufw allow from 192.168.1.0/24 to any port 8080 proto tcp
 
 # Allow metrics (from monitoring server only)
 sudo ufw allow from 192.168.1.10 to any port 9090 proto tcp
 
-# Allow health checks (internal network only)
-sudo ufw allow from 192.168.1.0/24 to any port 8080 proto tcp
-
-# Deny all other incoming
+# Deny all other incoming traffic
 sudo ufw default deny incoming
+sudo ufw default allow outgoing
 ```
 
 ### Network Segmentation

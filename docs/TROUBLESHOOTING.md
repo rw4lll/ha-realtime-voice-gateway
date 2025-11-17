@@ -18,8 +18,8 @@ docker-compose logs -f gateway
 tail -f /var/log/gateway/gateway.log
 
 # 3. Check network connectivity
-nc -zv localhost 10200  # Wyoming port
-curl http://localhost:9090/health  # Health endpoint
+curl http://localhost:8080/voice-stream  # WebSocket endpoint (should return "Upgrade Required")
+curl http://localhost:9090/health  # Health endpoint (if metrics enabled)
 
 # 4. Verify HA connectivity
 curl -H "Authorization: Bearer $HA_TOKEN" http://homeassistant.local:8123/api/
@@ -149,8 +149,8 @@ curl -H "Authorization: Bearer $GEMINI_API_KEY" \
 
 5. **Check audio format compatibility:**
    ```bash
-   # Verify Wyoming device audio format
-   # Should be 16kHz, 16-bit, mono
+   # ESP32 device should stream in 16kHz, 16-bit, mono PCM
+   # Verify in device logs or gateway logs
    ```
 
 6. **Reduce CPU load:**
@@ -234,10 +234,10 @@ curl -H "Authorization: Bearer $GEMINI_API_KEY" \
 ### Device Not Connecting
 
 **Symptoms:**
-- HA Voice Preview device can't reach gateway
-- Wyoming integration shows as unavailable
-- Connection refused errors
-- Device shows offline in HA
+- ESP32 device can't connect to gateway
+- WebSocket connection refused errors
+- Device shows "connection error" or retries
+- Gateway logs show no incoming connections
 
 **Possible Causes:**
 1. Firewall blocking ports
@@ -256,27 +256,29 @@ curl -H "Authorization: Bearer $GEMINI_API_KEY" \
    # Check logs for startup
    docker-compose logs gateway | grep "Gateway ready"
    
-   # Should see: "Gateway ready wyoming_addr=0.0.0.0:10200"
+   # Should see: "Gateway ready  websocket_addr=0.0.0.0:8080"
    ```
 
 2. **Check port binding:**
    ```bash
-   # Verify Wyoming ports are listening
-   netstat -an | grep 10200
-   netstat -an | grep 10201
+   # Verify WebSocket server is listening
+   netstat -an | grep 8080
+   # Or use ss
+   ss -tlnp | grep 8080
    
    # Should see:
-   # tcp 0 0 0.0.0.0:10200 0.0.0.0:* LISTEN
-   # tcp 0 0 0.0.0.0:10201 0.0.0.0:* LISTEN
+   # tcp 0 0 0.0.0.0:8080 0.0.0.0:* LISTEN
    ```
 
-3. **Test connectivity from HA:**
+3. **Test WebSocket connection from client:**
    ```bash
-   # From Home Assistant host
-   nc -zv gateway-ip 10200
-   nc -zv gateway-ip 10201
+   # From ESP32's network (or same network as device)
+   curl http://gateway-ip:8080/voice-stream
    
-   # Should see: "succeeded!"
+   # Should see: "Upgrade Required" (indicates WebSocket endpoint is working)
+   
+   # Or test with wscat (install: npm install -g wscat)
+   wscat -c ws://gateway-ip:8080/voice-stream
    ```
 
 4. **Check firewall rules:**
@@ -284,32 +286,36 @@ curl -H "Authorization: Bearer $GEMINI_API_KEY" \
    # List rules
    sudo ufw status verbose
    
-   # Add rules if needed
-   sudo ufw allow 10200/tcp
-   sudo ufw allow 10201/tcp
+   # Add WebSocket rule if needed
+   sudo ufw allow 8080/tcp
+   
+   # Or restrict to specific subnet (recommended)
+   sudo ufw allow from 192.168.1.0/24 to any port 8080 proto tcp
    ```
 
 5. **Verify listen address:**
    ```bash
    # .env
-   WYOMING_HOST=0.0.0.0  # Listen on all interfaces
-   # NOT 127.0.0.1 (localhost only)
+   WEBSOCKET_ADDR=0.0.0.0:8080  # Listen on all interfaces
+   # NOT 127.0.0.1:8080 (localhost only)
    ```
 
-6. **Check HA configuration:**
-   ```yaml
-   # configuration.yaml
-   wyoming:
-     - uri: tcp://192.168.1.100:10200  # Use actual IP, not localhost
-       name: "Realtime Gateway"
-   ```
+6. **Check ESP32 device configuration:**
+   - Gateway URL should be: `ws://gateway-ip:8080/voice-stream`
+   - Use actual IP address, not `localhost` (unless on same host)
+   - Make sure to use `ws://` protocol, not `http://`
 
-7. **Test with nc:**
+7. **Test WebSocket handshake manually:**
    ```bash
-   # From HA device
-   echo '{"type": "describe"}' | nc gateway-ip 10200
+   # Using curl (HTTP upgrade test)
+   curl -i -N \
+     -H "Connection: Upgrade" \
+     -H "Upgrade: websocket" \
+     -H "Sec-WebSocket-Version: 13" \
+     -H "Sec-WebSocket-Key: test" \
+     http://gateway-ip:8080/voice-stream
    
-   # Should receive JSON response
+   # Should see "101 Switching Protocols"
    ```
 
 ### Gemini API Errors
@@ -405,11 +411,13 @@ curl -H "Authorization: Bearer $GEMINI_API_KEY" \
 
 3. **Check for port conflicts:**
    ```bash
-   # See what's using the ports
-   lsof -i :10200
-   lsof -i :10201
+   # See what's using port 8080
+   lsof -i :8080
+   # Or
+   ss -tlnp | grep 8080
    
-   # Kill conflicting process or change ports
+   # Kill conflicting process or change port mapping
+   # In docker-compose.yml: ports: ["8081:8080"]
    ```
 
 4. **Check file permissions:**
@@ -548,8 +556,8 @@ curl http://localhost:8080/health | jq
 ### Trace Network Traffic
 
 ```bash
-# Monitor Wyoming protocol
-tcpdump -i any -A 'tcp port 10200'
+# Monitor WebSocket traffic
+tcpdump -i any -A 'tcp port 8080'
 
 # Monitor HA API calls
 tcpdump -i any -A 'tcp port 8123'
@@ -558,12 +566,12 @@ tcpdump -i any -A 'tcp port 8123'
 ### Test Individual Components
 
 ```bash
-# Test Wyoming protocol
+# Test WebSocket protocol
 cd test/
-python3 wyoming_client.py --host localhost --port 10200
+python3 websocket_client.py --host localhost --port 8080
 
-# Test with audio
-python3 audio_bridge.py --host localhost --port 10200
+# Test with audio (using laptop mic/speakers)
+python3 audio_bridge.py --gateway ws://localhost:8080/voice-stream
 ```
 
 ## Getting Help

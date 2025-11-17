@@ -77,7 +77,7 @@ docker build -t ha-voice-gateway .
 ```bash
 docker run -d \
   --name ha-voice-gateway \
-  -p 10200:10200 \
+  -p 8080:8080 \
   -e HA_URL=http://homeassistant.local:8123 \
   -e HA_TOKEN=your_token_here \
   -e BACKEND_TYPE=mock \
@@ -99,7 +99,8 @@ All configuration is done through environment variables. See `env.example` for a
 - `GEMINI_API_KEY` - Google Gemini API key (if using Gemini)
 - `OPENAI_API_KEY` - OpenAI API key (if using OpenAI)
 - `LOG_LEVEL` - Log level: `debug`, `info`, `warn`, `error` (default: `info`)
-- `WYOMING_ADDR` - Wyoming server address (default: `0.0.0.0:10200`)
+- `WEBSOCKET_ADDR` - WebSocket server address (default: `0.0.0.0:8080`)
+- `WEBSOCKET_PATH` - WebSocket endpoint path (default: `/voice-stream`)
 
 ### Docker Compose Configuration
 
@@ -126,7 +127,7 @@ services:
       - HA_URL=http://192.168.1.100:8123  # Your HA IP
       - HA_TOKEN=${HA_TOKEN}
     ports:
-      - "10200:10200"
+      - "8080:8080"  # WebSocket server
 ```
 
 ### 2. Same Host as Home Assistant
@@ -173,14 +174,13 @@ services:
       - LOG_FORMAT=json
       - METRICS_ENABLED=true
     ports:
-      - "10200:10200"
-      - "9090:9090"  # Prometheus metrics
+      - "8080:8080"   # WebSocket server
+      - "9090:9090"   # Prometheus metrics
 ```
 
 ## Ports
 
-- **10200** - Wyoming protocol (required)
-- **8080** - Health check endpoint (optional)
+- **8080** - WebSocket server (required) - Devices connect to `ws://gateway:8080/voice-stream`
 - **9090** - Prometheus metrics (optional)
 
 ## Health Checks
@@ -235,7 +235,7 @@ docker-compose logs gateway
 Common issues:
 - Invalid `HA_TOKEN` - Check token in Home Assistant
 - `HA_URL` unreachable - Verify network connectivity
-- Port 10200 already in use - Change port mapping
+- Port 8080 already in use - Change port mapping (`-p 8081:8080`)
 
 ### Can't connect to Home Assistant
 
@@ -244,11 +244,15 @@ Test connectivity from container:
 docker-compose exec gateway wget -O- ${HA_URL}/api/
 ```
 
-### Wyoming device can't connect
+### ESP32 device can't connect
 
-Verify port is accessible:
+Verify WebSocket endpoint is accessible:
 ```bash
-nc -zv localhost 10200
+# Should return "Upgrade Required" (WebSocket endpoint)
+curl http://localhost:8080/voice-stream
+
+# Or test with wscat (npm install -g wscat)
+wscat -c ws://localhost:8080/voice-stream
 ```
 
 ### High memory usage
@@ -411,28 +415,34 @@ services:
           memory: 256M
 ```
 
-## Integration with Home Assistant
+## Integration with ESP32 Devices
 
-### Add to Home Assistant
+### Configure ESP32 Device
 
-In your Home Assistant `configuration.yaml`:
+Set the WebSocket gateway URL in your ESP32 device settings:
 
-```yaml
-wyoming:
-  - host: gateway  # Or IP address
-    port: 10200
+```
+Gateway URL: ws://gateway:8080/voice-stream
 ```
 
-Or via UI:
-1. Settings → Devices & Services
-2. Add Integration → Wyoming Protocol
-3. Host: `gateway` (or container IP)
-4. Port: `10200`
+**Examples based on deployment:**
+- Same Docker network: `ws://gateway:8080/voice-stream`
+- Bridge network: `ws://192.168.1.100:8080/voice-stream`
+- Host network: `ws://localhost:8080/voice-stream`
 
-### Verify connection
+### Entering Streaming Mode
+
+**Press the device button 4 times** to switch from standard Home Assistant Voice Preview mode to direct streaming mode.
+
+### Verify Connection
+
 ```bash
-# Check from HA container
-docker exec homeassistant nc -zv gateway 10200
+# Check WebSocket endpoint is accessible
+curl http://gateway:8080/voice-stream
+# Should return "Upgrade Required" (WebSocket endpoint)
+
+# Or from device's network
+curl http://192.168.1.100:8080/voice-stream
 ```
 
 ## Advanced Configuration
@@ -462,10 +472,10 @@ services:
 services:
   gateway-1:
     ports:
-      - "10200:10200"
+      - "8080:8080"
   gateway-2:
     ports:
-      - "10201:10200"
+      - "8081:8080"  # Different external port, same internal port
 ```
 
 ## Performance Tuning
