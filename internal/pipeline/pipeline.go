@@ -6,7 +6,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rw4lll/ha-realtime-voice-gateway/internal/audio"
 	"github.com/rw4lll/ha-realtime-voice-gateway/internal/backend"
+	"github.com/rw4lll/ha-realtime-voice-gateway/internal/config"
 	"github.com/rw4lll/ha-realtime-voice-gateway/internal/session"
 	"github.com/rw4lll/ha-realtime-voice-gateway/internal/websocket"
 	"go.uber.org/zap"
@@ -28,6 +30,7 @@ type Pipeline struct {
 	audioBufferMs    int
 	safetyTimeout    time.Duration
 	silenceTimeout   time.Duration
+	audioConfig      config.AudioConfig // Audio processing configuration
 }
 
 // Config holds pipeline configuration.
@@ -36,10 +39,11 @@ type Config struct {
 	Logger         *zap.Logger
 	ToolExecutor   ToolExecutor
 	SystemPrompt   string
-	AudioBufferMs  int           // Audio buffering before playback (ms)
-	EnableMetrics  bool          // Enable metrics collection
-	SafetyTimeout  time.Duration // Max session duration
-	SilenceTimeout time.Duration // Silence before ending conversation
+	AudioConfig    config.AudioConfig // Audio processing configuration
+	AudioBufferMs  int                // Audio buffering before playback (ms)
+	EnableMetrics  bool               // Enable metrics collection
+	SafetyTimeout  time.Duration      // Max session duration
+	SilenceTimeout time.Duration      // Silence before ending conversation
 }
 
 // ToolExecutor handles Home Assistant tool calls.
@@ -91,6 +95,7 @@ func NewPipeline(cfg Config) (*Pipeline, error) {
 		audioBufferMs:    audioBufferMs,
 		safetyTimeout:    safetyTimeout,
 		silenceTimeout:   silenceTimeout,
+		audioConfig:      cfg.AudioConfig,
 	}
 
 	// Initialize backend if not already initialized
@@ -139,11 +144,48 @@ func (p *Pipeline) HandleWebSocketSession(ws *websocket.Session) {
 	}
 	sessionLogger.Info("backend session started successfully")
 
+	// Get backend audio capabilities
+	backendCaps := p.backend.Capabilities()
+	backendRate := 16000 // Default device rate
+	if len(backendCaps.SupportedAudioFormats) > 0 {
+		backendRate = backendCaps.SupportedAudioFormats[0].SampleRate
+	}
+
+	// Create audio processor if needed
+	var audioProcessor *audio.Processor
+	deviceRate := p.audioConfig.ResamplingTargetRate
+	if deviceRate == 0 {
+		deviceRate = 16000 // Default for ESP32 devices
+	}
+
+	audioProcessor, err = audio.NewProcessor(audio.ProcessorConfig{
+		Enabled:    p.audioConfig.ResamplingEnabled,
+		Algorithm:  p.audioConfig.ResamplingAlgorithm,
+		SourceRate: backendRate,
+		TargetRate: deviceRate,
+		Logger:     sessionLogger,
+	})
+	if err != nil {
+		sessionLogger.Error("failed to create audio processor", zap.Error(err))
+		ws.SendError("Failed to initialize audio processor")
+		ws.Close()
+		return
+	}
+
+	// Log audio configuration
+	if audioProcessor.IsEnabled() {
+		sessionLogger.Info("audio resampling configured",
+			zap.Int("backend_rate", backendRate),
+			zap.Int("device_rate", deviceRate),
+			zap.String("algorithm", audioProcessor.GetAlgorithm()))
+	}
+
 	// Create session handler (preserves old Wyoming logic)
 	handler := session.NewHandler(session.Config{
 		WebSocketSession: ws,
 		BackendSession:   backendSession,
 		ToolExecutor:     p.toolExecutor,
+		AudioProcessor:   audioProcessor,
 		Logger:           sessionLogger,
 		AudioBufferMs:    p.audioBufferMs,
 		SafetyTimeout:    p.safetyTimeout,

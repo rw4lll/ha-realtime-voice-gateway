@@ -99,7 +99,15 @@ type WebSocketYAML struct {
 
 // AudioYAML holds audio configuration.
 type AudioYAML struct {
-	BufferSize int `yaml:"buffer_size"`
+	BufferSize int                `yaml:"buffer_size"`
+	Resampling ResamplingYAML `yaml:"resampling"`
+}
+
+// ResamplingYAML holds audio resampling configuration.
+type ResamplingYAML struct {
+	Enabled    string `yaml:"enabled"`     // "auto", "true", "false"
+	Algorithm  string `yaml:"algorithm"`   // "fast", "linear", "cubic"
+	TargetRate *int   `yaml:"target_rate"` // Target sample rate (Hz)
 }
 
 // SessionYAML holds session configuration.
@@ -293,6 +301,32 @@ func (c *Config) MergeWithEnv(yamlCfg *HAConfig) error {
 
 	if yamlCfg.WebSocket.WriteTimeout != nil {
 		c.WebSocket.WriteTimeout = *yamlCfg.WebSocket.WriteTimeout
+	}
+
+	// Audio - buffer size
+	if bufferSize := getIntEnv("AUDIO_BUFFER_SIZE", 0); bufferSize > 0 {
+		c.Audio.BufferSize = bufferSize
+	} else if yamlCfg.Audio.BufferSize > 0 {
+		c.Audio.BufferSize = yamlCfg.Audio.BufferSize
+	}
+
+	// Audio - resampling configuration
+	if enabled := getEnv("AUDIO_RESAMPLING_ENABLED", ""); enabled != "" {
+		c.Audio.ResamplingEnabled = enabled
+	} else if yamlCfg.Audio.Resampling.Enabled != "" {
+		c.Audio.ResamplingEnabled = yamlCfg.Audio.Resampling.Enabled
+	}
+
+	if algorithm := getEnv("AUDIO_RESAMPLING_ALGORITHM", ""); algorithm != "" {
+		c.Audio.ResamplingAlgorithm = algorithm
+	} else if yamlCfg.Audio.Resampling.Algorithm != "" {
+		c.Audio.ResamplingAlgorithm = yamlCfg.Audio.Resampling.Algorithm
+	}
+
+	if targetRate := getIntEnv("AUDIO_RESAMPLING_TARGET_RATE", 0); targetRate > 0 {
+		c.Audio.ResamplingTargetRate = targetRate
+	} else if yamlCfg.Audio.Resampling.TargetRate != nil {
+		c.Audio.ResamplingTargetRate = *yamlCfg.Audio.Resampling.TargetRate
 	}
 
 	// Session

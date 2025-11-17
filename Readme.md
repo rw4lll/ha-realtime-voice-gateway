@@ -305,13 +305,19 @@ See **[test/README.md](test/README.md)** for complete testing guide.
 
 ### User Guides
 - **[Configuration Guide](docs/CONFIGURATION.md)** - All settings explained
+- **[Audio Resampling Config](docs/AUDIO_RESAMPLING_CONFIG.md)** - Configure 24kHz→16kHz conversion
 - **[Troubleshooting](docs/TROUBLESHOOTING.md)** - Common issues and fixes
 - **[Security Guide](docs/SECURITY.md)** - Securing your gateway
 
 ### Technical Docs
 - **[Architecture](docs/ARCHITECTURE.md)** - How it works internally
-- **[WebSocket Protocol](STREAMING_GATEWAY_PROTOCOL.md)** - Device communication spec
-- **[Development Guide](docs/DEVELOPMENT.md)** - Contributing to the project
+- **[Audio Resampling](docs/AUDIO_RESAMPLING.md)** - Technical deep dive on sample rate conversion
+- **[Audio Formats Reference](docs/AUDIO_FORMATS_QUICK_REF.md)** - Format specs and calculations
+- **[WebSocket Protocol](docs/STREAMING_GATEWAY_PROTOCOL.md)** - Device communication spec
+
+### Testing
+- **[Testing Resampling](test/TESTING_RESAMPLING.md)** - How to test audio resampling
+- **[Test Script Guide](test/README.md)** - Using audio_bridge.py
 
 ---
 

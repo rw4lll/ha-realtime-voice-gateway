@@ -6,14 +6,15 @@ This directory contains test scripts for the Home Assistant Realtime Voice Gatew
 
 ### `audio_bridge.py` - Full Audio Testing with Laptop
 
-**Purpose**: Test the complete voice pipeline using your laptop's microphone and speakers.
+**Purpose**: Test the complete voice pipeline using your laptop's microphone and speakers. **Now simulates ESP32 Voice Preview device with 16kHz audio only** to test the gateway's audio resampling feature.
 
 **Use Cases**:
 - Test LLM backend (Gemini, OpenAI, etc.) with real audio
-- Verify bidirectional audio streaming
+- **Verify audio resampling** (Gemini 24kHz → ESP32 16kHz)
 - Test voice interactions before getting physical hardware
 - Debug audio quality issues
 - Test Home Assistant tool execution
+- **Validate resampling works correctly** - speech should sound natural, not slow/deep
 
 **Requirements**:
 ```bash
@@ -52,10 +53,21 @@ python3 audio_bridge.py --verbose
 2. Captures audio from your microphone (16kHz, 16-bit, mono)
 3. Sends raw PCM audio to gateway via WebSocket (binary frames)
 4. Gateway forwards to LLM backend (Gemini, OpenAI, etc.)
-5. LLM processes and responds
-6. Response audio comes back through gateway
-7. Plays through your laptop speakers
-8. Displays gateway state transitions (listening → thinking → speaking → done)
+5. LLM processes and responds with 24kHz audio
+6. **Gateway resamples 24kHz → 16kHz** (simulates ESP32 device)
+7. Response audio comes back through gateway (16kHz)
+8. Plays through your laptop speakers at 16kHz
+9. Displays gateway state transitions (listening → thinking → speaking → done)
+
+**Audio Format Simulation**:
+- **Microphone**: 16kHz (like ESP32 device)
+- **Speakers**: 16kHz (like ESP32 device)
+- **Backend (Gemini)**: 24kHz output
+- **Gateway**: Automatically resamples 24kHz → 16kHz
+
+**Testing Resampling**:
+- ✅ **Natural speech** = Resampling is working correctly!
+- ❌ **Slow/deep speech** = Resampling may be disabled (check `AUDIO_RESAMPLING_ENABLED`)
 
 **Try Saying**:
 - "Hello, how are you?"
@@ -201,9 +213,9 @@ Press Ctrl+C to stop early
 
 ## 🧪 Testing Scenarios
 
-### Scenario 1: Basic Conversation Test
+### Scenario 1: Basic Conversation + Resampling Test
 
-**Goal**: Verify LLM responds to simple queries.
+**Goal**: Verify LLM responds to simple queries AND audio resampling works.
 
 **Terminal 1 - Gateway:**
 ```bash
@@ -222,9 +234,25 @@ python3 audio_bridge.py
 
 **Expected**:
 - Gateway logs show: "New WebSocket session connected"
+- Gateway logs show: "audio resampling configured" (backend_rate=24000, device_rate=16000)
+- Gateway logs show: "audio resampling enabled for session"
 - Gateway logs show: "session handler starting"
 - You see state transitions: listening → thinking → speaking
-- You hear LLM's voice response
+- You hear LLM's voice response **at natural pitch and speed** (not slow/deep)
+
+**If Audio Sounds Slow/Deep**:
+```bash
+# Check gateway logs for:
+grep "resampling" logs/gateway.log
+
+# Should see:
+# INFO  audio resampling configured backend_rate=24000 device_rate=16000
+# INFO  audio resampling enabled for session
+
+# If resampling is disabled, enable it:
+# In .env or docker-compose.yml:
+AUDIO_RESAMPLING_ENABLED=auto  # Should be default
+```
 
 ### Scenario 2: Home Assistant Control Test
 
@@ -390,6 +418,58 @@ ERROR   Failed to execute tool
 4. Check system audio settings
 5. Try different audio device
 6. Check gateway logs for "audio buffer full" warnings
+
+### Audio Sounds Slow or Deep
+
+**Problem**: Voice sounds like slow-motion, pitch is too low
+
+**Cause**: Gateway is sending 24kHz audio but device is playing it at 16kHz (resampling not working)
+
+**Solutions**:
+1. **Check resampling is enabled**:
+   ```bash
+   # In .env or docker-compose.yml:
+   AUDIO_RESAMPLING_ENABLED=auto  # Default, should auto-detect
+   ```
+
+2. **Check gateway logs**:
+   ```bash
+   docker-compose logs gateway | grep resampling
+   
+   # Should see:
+   # INFO  audio resampling configured backend_rate=24000 device_rate=16000
+   # INFO  audio resampling enabled for session
+   ```
+
+3. **Force enable resampling** (if auto-detection fails):
+   ```bash
+   AUDIO_RESAMPLING_ENABLED=true
+   ```
+
+4. **Verify backend capabilities**:
+   ```bash
+   # Check logs for backend audio format:
+   docker-compose logs gateway | grep "audio_format\|backend_rate"
+   ```
+
+5. **Restart gateway** after config changes:
+   ```bash
+   docker-compose restart gateway
+   ```
+
+### Audio Sounds Fast or High-Pitched
+
+**Problem**: Voice sounds like chipmunk, pitch is too high
+
+**Cause**: Unlikely with Gemini (outputs 24kHz), but may occur with other backends
+
+**Solutions**:
+1. Check target rate matches your device:
+   ```bash
+   AUDIO_RESAMPLING_TARGET_RATE=16000  # For ESP32/laptop test
+   ```
+
+2. Verify backend output rate in logs
 
 ### WebSocket Disconnects
 

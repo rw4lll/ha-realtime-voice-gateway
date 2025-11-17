@@ -216,6 +216,7 @@ func main() {
 		Logger:         logger,
 		ToolExecutor:   toolExecutor,
 		SystemPrompt:   systemPrompt,
+		AudioConfig:    cfg.Audio,
 		AudioBufferMs:  cfg.Session.AudioBufferMs,
 		EnableMetrics:  cfg.Performance.EnableMetrics,
 		SafetyTimeout:  cfg.Session.SafetyTimeout,
