@@ -49,10 +49,13 @@ except ImportError:
     sys.exit(1)
 
 # Audio configuration (must match gateway/LLM format)
-SAMPLE_RATE = 16000  # 16kHz
+# Note: Microphone input is 16kHz, but Gemini outputs 24kHz
+MIC_SAMPLE_RATE = 16000  # 16kHz for microphone input
+SPEAKER_SAMPLE_RATE = 24000  # 24kHz for Gemini audio output
 CHANNELS = 1         # Mono
 SAMPLE_WIDTH = 2     # 16-bit (2 bytes)
-CHUNK_SIZE = 160     # 10ms at 16kHz (160 samples = 320 bytes)
+MIC_CHUNK_SIZE = 160     # 10ms at 16kHz (160 samples = 320 bytes)
+SPEAKER_CHUNK_SIZE = 480  # 20ms at 24kHz (480 samples = 960 bytes)
 
 
 class WebSocketAudioBridge:
@@ -114,9 +117,9 @@ class WebSocketAudioBridge:
                                     self.speaker_stream = self.audio.open(
                                         format=pyaudio.paInt16,
                                         channels=CHANNELS,
-                                        rate=SAMPLE_RATE,
+                                        rate=SPEAKER_SAMPLE_RATE,
                                         output=True,
-                                        frames_per_buffer=CHUNK_SIZE * 2
+                                        frames_per_buffer=SPEAKER_CHUNK_SIZE * 2
                                     )
                                     self.log("Speaker stream initialized")
                                 except Exception as e:
@@ -161,9 +164,9 @@ class WebSocketAudioBridge:
             stream = self.audio.open(
                 format=pyaudio.paInt16,
                 channels=CHANNELS,
-                rate=SAMPLE_RATE,
+                rate=MIC_SAMPLE_RATE,
                 input=True,
-                frames_per_buffer=CHUNK_SIZE
+                frames_per_buffer=MIC_CHUNK_SIZE
             )
         except Exception as e:
             print(f"❌ Failed to open microphone: {e}")
@@ -176,7 +179,7 @@ class WebSocketAudioBridge:
         try:
             while self.running:
                 # Read audio chunk from microphone
-                audio_data = stream.read(CHUNK_SIZE, exception_on_overflow=False)
+                audio_data = stream.read(MIC_CHUNK_SIZE, exception_on_overflow=False)
                 
                 # Send raw PCM audio to gateway (binary WebSocket message)
                 if self.ws and self.ws.sock and self.ws.sock.connected:
@@ -189,8 +192,11 @@ class WebSocketAudioBridge:
             if self.running:
                 print(f"❌ Microphone error: {e}")
         finally:
-            stream.stop_stream()
-            stream.close()
+            try:
+                stream.stop_stream()
+                stream.close()
+            except Exception as e:
+                self.log(f"Microphone cleanup error (can be ignored): {e}")
             print(f"🎤 Microphone stopped (sent {self.sent_chunks} chunks)")
     
     def speaker_thread(self):
@@ -222,8 +228,12 @@ class WebSocketAudioBridge:
         finally:
             with self.speaker_lock:
                 if self.speaker_stream:
-                    self.speaker_stream.stop_stream()
-                    self.speaker_stream.close()
+                    try:
+                        self.speaker_stream.stop_stream()
+                        self.speaker_stream.close()
+                        self.speaker_stream = None
+                    except Exception as e:
+                        self.log(f"Speaker cleanup error (can be ignored): {e}")
             print(f"🔊 Speaker stopped (played {self.received_chunks} chunks)")
     
     def connect(self):
@@ -287,9 +297,15 @@ class WebSocketAudioBridge:
         if self.ws:
             self.ws.close()
         
+        # Wait for threads to finish and clean up their streams
         ws_thread.join(timeout=2)
+        time.sleep(0.5)  # Give threads time to clean up streams
         
-        self.audio.terminate()
+        # Now terminate PyAudio after streams are closed
+        try:
+            self.audio.terminate()
+        except Exception as e:
+            self.log(f"PyAudio termination error (can be ignored): {e}")
         
         print(f"\n{'='*60}")
         print("📊 Session Statistics:")

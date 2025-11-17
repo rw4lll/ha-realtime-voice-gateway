@@ -61,7 +61,7 @@ func NewHandler(cfg Config) *Handler {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	if cfg.AudioBufferMs == 0 {
-		cfg.AudioBufferMs = 500 // Default 500ms
+		cfg.AudioBufferMs = 100 // Default 100ms
 	}
 
 	if cfg.SafetyTimeout == 0 {
@@ -143,9 +143,20 @@ func (h *Handler) forwardAudioToDevice() {
 	defer h.wg.Done()
 
 	frameCount := 0
-	bufferFrames := h.audioStartBufferMs / 10 // Assuming 10ms per frame
-	if bufferFrames < 1 {
-		bufferFrames = 1
+	// Calculate buffer based on frame count, not timing assumptions
+	// With variable frame sizes from LLM, we buffer a fixed small number of frames
+	bufferFrames := 3 // Buffer just 3 frames before starting playback
+	if h.audioStartBufferMs > 0 {
+		// If specific buffer time is set, use it but be conservative
+		// Assume 20ms per frame (typical for Gemini at 24kHz)
+		bufferFrames = h.audioStartBufferMs / 20
+		if bufferFrames < 1 {
+			bufferFrames = 1
+		}
+		// Cap at reasonable max to avoid long delays
+		if bufferFrames > 10 {
+			bufferFrames = 10
+		}
 	}
 	audioBuffer := make([][]byte, 0, bufferFrames)
 	audioStartSent := false
@@ -409,22 +420,39 @@ func (h *Handler) monitorSafetyTimeout() {
 				return
 			}
 
-			// Check for conversation completion (silence after backend audio)
+			// Check for conversation completion (silence after both user and backend stop)
+			// Only end conversation if BOTH backend finished speaking AND user hasn't spoken recently
 			if h.audioStartSent.Load() {
+				var lastActivity time.Time
+
+				// Get last backend audio time
 				lastAudioInterface := h.lastAudioTime.Load()
 				if lastAudioInterface != nil {
 					lastAudio := lastAudioInterface.(time.Time)
 					if !lastAudio.IsZero() {
-						timeSinceLastAudio := time.Since(lastAudio)
-						
-						// If backend silent for threshold, conversation is complete
-						if timeSinceLastAudio > silenceThreshold {
-							h.logger.Info("conversation complete (silence detected)",
-								zap.Duration("silence", timeSinceLastAudio))
-							h.wsSession.SendState(websocket.StateDone)
-							h.cancel()
-							return
-						}
+						lastActivity = lastAudio
+					}
+				}
+
+				// Get last user audio time
+				lastUserInterface := h.lastUserAudioTime.Load()
+				if lastUserInterface != nil {
+					lastUser := lastUserInterface.(time.Time)
+					// Use the most recent activity (either user or backend)
+					if !lastUser.IsZero() && lastUser.After(lastActivity) {
+						lastActivity = lastUser
+					}
+				}
+
+				// Only end if both sides have been silent for the threshold
+				if !lastActivity.IsZero() {
+					timeSinceActivity := time.Since(lastActivity)
+					if timeSinceActivity > silenceThreshold {
+						h.logger.Info("conversation complete (silence detected)",
+							zap.Duration("silence", timeSinceActivity))
+						h.wsSession.SendState(websocket.StateDone)
+						h.cancel()
+						return
 					}
 				}
 			}
@@ -444,4 +472,3 @@ func (h *Handler) Close() error {
 	h.wg.Wait()
 	return nil
 }
-

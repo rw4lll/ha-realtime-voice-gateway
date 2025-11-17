@@ -207,8 +207,8 @@ func Load() (*Config, error) {
 		Session: SessionConfig{
 			SystemPrompt:   "You are a helpful voice assistant for Home Assistant. You can control lights, switches, climate, covers, and media players.",
 			SafetyTimeout:  5 * time.Minute, // 5 min max session duration
-			SilenceTimeout: 3 * time.Second, // 3s silence before ending
-			AudioBufferMs:  500,             // 500ms audio buffer
+			SilenceTimeout: 5 * time.Second, // 5s silence before ending (allows multi-turn conversations)
+			AudioBufferMs:  100,             // 100ms audio buffer (reduced for lower latency)
 		},
 		Logging: LoggingConfig{
 			Level:  "info",
@@ -274,8 +274,8 @@ func Load() (*Config, error) {
 		cfg.Audio.BufferSize = getIntEnv("AUDIO_BUFFER_SIZE", 100)
 		cfg.Session.SystemPrompt = getEnv("SYSTEM_PROMPT", "You are a helpful voice assistant for Home Assistant. You can control lights, switches, climate, covers, and media players.")
 		cfg.Session.SafetyTimeout = getDurationEnv("SESSION_SAFETY_TIMEOUT", 5*time.Minute)
-		cfg.Session.SilenceTimeout = getDurationEnv("SESSION_SILENCE_TIMEOUT", 3*time.Second)
-		cfg.Session.AudioBufferMs = getIntEnv("SESSION_AUDIO_BUFFER_MS", 500)
+		cfg.Session.SilenceTimeout = getDurationEnv("SESSION_SILENCE_TIMEOUT", 5*time.Second)
+		cfg.Session.AudioBufferMs = getIntEnv("SESSION_AUDIO_BUFFER_MS", 100)
 		cfg.Logging.Level = getEnv("LOG_LEVEL", "info")
 		cfg.Logging.Format = getEnv("LOG_FORMAT", "console")
 		cfg.Performance.AudioBufferSize = getIntEnv("AUDIO_BUFFER_SIZE", 100)
