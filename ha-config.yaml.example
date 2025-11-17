@@ -111,6 +111,13 @@ websocket:
 # Audio settings
 audio:
   buffer_size: 100  # Number of frames to buffer
+  
+  # Audio resampling (for sample rate conversion between backend and device)
+  # The gateway automatically handles sample rate mismatches (e.g., Gemini 24kHz → Device 16kHz)
+  resampling:
+    enabled: "auto"        # Options: auto, true, false (default: auto)
+    algorithm: "fast"      # Options: fast, linear, cubic (default: fast)
+    target_rate: 16000     # Target device sample rate in Hz (default: 16000 for ESP32)
 
 # Session settings
 session:

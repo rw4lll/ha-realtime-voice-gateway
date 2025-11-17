@@ -102,6 +102,11 @@ type AudioConfig struct {
 	//   - Input: WebSocket client (16kHz, 16-bit, mono PCM)
 	//   - Output: Backend's native format (from Capabilities())
 	// No configuration needed - formats auto-negotiate!
+
+	// Audio Resampling (for sample rate conversion)
+	ResamplingEnabled    string // "auto" (default), "true", "false" - auto enables when backend != device rate
+	ResamplingAlgorithm  string // "fast" (default), "linear", "cubic" - fast is optimized for 24kHz→16kHz
+	ResamplingTargetRate int    // Target sample rate (0 = auto-detect from device, typically 16000)
 }
 
 // SessionConfig holds session management configuration.
@@ -202,7 +207,10 @@ func Load() (*Config, error) {
 			WriteTimeout:  10,
 		},
 		Audio: AudioConfig{
-			BufferSize: 100,
+			BufferSize:           100,
+			ResamplingEnabled:    "auto", // Auto-detect based on backend capabilities
+			ResamplingAlgorithm:  "fast", // Optimized for 24kHz→16kHz
+			ResamplingTargetRate: 16000,  // Target 16kHz for ESP32 devices
 		},
 		Session: SessionConfig{
 			SystemPrompt:   "You are a helpful voice assistant for Home Assistant. You can control lights, switches, climate, covers, and media players.",
@@ -272,6 +280,9 @@ func Load() (*Config, error) {
 		cfg.WebSocket.ReadTimeout = getIntEnv("WEBSOCKET_READ_TIMEOUT", 60)
 		cfg.WebSocket.WriteTimeout = getIntEnv("WEBSOCKET_WRITE_TIMEOUT", 10)
 		cfg.Audio.BufferSize = getIntEnv("AUDIO_BUFFER_SIZE", 100)
+		cfg.Audio.ResamplingEnabled = getEnv("AUDIO_RESAMPLING_ENABLED", "auto")
+		cfg.Audio.ResamplingAlgorithm = getEnv("AUDIO_RESAMPLING_ALGORITHM", "fast")
+		cfg.Audio.ResamplingTargetRate = getIntEnv("AUDIO_RESAMPLING_TARGET_RATE", 16000)
 		cfg.Session.SystemPrompt = getEnv("SYSTEM_PROMPT", "You are a helpful voice assistant for Home Assistant. You can control lights, switches, climate, covers, and media players.")
 		cfg.Session.SafetyTimeout = getDurationEnv("SESSION_SAFETY_TIMEOUT", 5*time.Minute)
 		cfg.Session.SilenceTimeout = getDurationEnv("SESSION_SILENCE_TIMEOUT", 5*time.Second)
@@ -344,6 +355,21 @@ func (c *Config) Validate() error {
 	}
 	if c.Session.SilenceTimeout < 0 {
 		return fmt.Errorf("SESSION_SILENCE_TIMEOUT must be non-negative")
+	}
+
+	// Validate audio configuration
+	validResamplingEnabled := map[string]bool{"": true, "auto": true, "true": true, "false": true}
+	if !validResamplingEnabled[strings.ToLower(c.Audio.ResamplingEnabled)] {
+		return fmt.Errorf("invalid AUDIO_RESAMPLING_ENABLED: %s (must be 'auto', 'true', or 'false')", c.Audio.ResamplingEnabled)
+	}
+
+	validResamplingAlgorithms := map[string]bool{"": true, "fast": true, "linear": true, "cubic": true}
+	if !validResamplingAlgorithms[strings.ToLower(c.Audio.ResamplingAlgorithm)] {
+		return fmt.Errorf("invalid AUDIO_RESAMPLING_ALGORITHM: %s (must be 'fast', 'linear', or 'cubic')", c.Audio.ResamplingAlgorithm)
+	}
+
+	if c.Audio.ResamplingTargetRate != 0 && (c.Audio.ResamplingTargetRate < 8000 || c.Audio.ResamplingTargetRate > 48000) {
+		return fmt.Errorf("invalid AUDIO_RESAMPLING_TARGET_RATE: %d (must be 0 or between 8000-48000)", c.Audio.ResamplingTargetRate)
 	}
 
 	if c.Backend.Type == "gemini" {

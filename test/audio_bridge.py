@@ -2,8 +2,9 @@
 """
 WebSocket Audio Bridge - Test gateway with laptop microphone and speakers.
 
-This script bridges your laptop's audio to the WebSocket gateway, allowing you
-to test the complete voice pipeline (including LLM backends) without physical hardware.
+This script simulates an ESP32 Voice Assistant Preview device by using 16kHz
+audio for BOTH input and output. This allows testing the gateway's audio
+resampling feature (Gemini outputs 24kHz, gateway resamples to 16kHz).
 
 Requirements:
     pip install pyaudio websocket-client
@@ -17,6 +18,11 @@ Usage:
     
     # Custom gateway address
     python3 audio_bridge.py --host 192.168.1.100 --port 8080
+
+Testing Resampling:
+    This script uses 16kHz speakers (like ESP32). The gateway should automatically
+    resample Gemini's 24kHz audio to 16kHz. If you hear natural-sounding speech,
+    resampling is working! If speech sounds slow/deep, resampling may be disabled.
 """
 
 import json
@@ -48,14 +54,19 @@ except ImportError:
     print("  pip install websocket-client")
     sys.exit(1)
 
-# Audio configuration (must match gateway/LLM format)
-# Note: Microphone input is 16kHz, but Gemini outputs 24kHz
-MIC_SAMPLE_RATE = 16000  # 16kHz for microphone input
-SPEAKER_SAMPLE_RATE = 24000  # 24kHz for Gemini audio output
-CHANNELS = 1         # Mono
-SAMPLE_WIDTH = 2     # 16-bit (2 bytes)
-MIC_CHUNK_SIZE = 160     # 10ms at 16kHz (160 samples = 320 bytes)
-SPEAKER_CHUNK_SIZE = 480  # 20ms at 24kHz (480 samples = 960 bytes)
+# Audio configuration - simulates ESP32 Voice Assistant Preview device
+# IMPORTANT: This script now uses 16kHz for BOTH input and output to simulate
+# the ESP32 device's hardware limitations. The gateway will automatically
+# resample Gemini's 24kHz audio down to 16kHz before sending it to us.
+#
+# Without gateway resampling: Audio would sound slow/deep (24kHz → 16kHz)
+# With gateway resampling: Audio sounds natural (resampled to 16kHz)
+MIC_SAMPLE_RATE = 16000      # 16kHz microphone (ESP32 hardware)
+SPEAKER_SAMPLE_RATE = 16000  # 16kHz speaker (ESP32 hardware) - gateway resamples 24→16kHz
+CHANNELS = 1                 # Mono
+SAMPLE_WIDTH = 2             # 16-bit (2 bytes)
+MIC_CHUNK_SIZE = 160         # 10ms at 16kHz (160 samples = 320 bytes)
+SPEAKER_CHUNK_SIZE = 320     # 20ms at 16kHz (320 samples = 640 bytes)
 
 
 class WebSocketAudioBridge:
@@ -256,6 +267,12 @@ class WebSocketAudioBridge:
         print(f"\n{'='*60}")
         print("🎙️  READY TO TEST!")
         print(f"{'='*60}")
+        print("This script simulates ESP32 Voice Preview (16kHz audio only)")
+        print("Gateway should resample Gemini's 24kHz → 16kHz automatically")
+        print()
+        print("✅ If speech sounds NATURAL: Resampling is working!")
+        print("❌ If speech sounds SLOW/DEEP: Resampling may be disabled")
+        print()
         print("Speak into your microphone and listen for responses...")
         print()
         print("Try saying:")
@@ -309,9 +326,14 @@ class WebSocketAudioBridge:
         
         print(f"\n{'='*60}")
         print("📊 Session Statistics:")
-        print(f"  Sent to gateway: {self.sent_chunks} audio chunks")
-        print(f"  Received from gateway: {self.received_chunks} audio chunks")
+        print(f"  Sent to gateway: {self.sent_chunks} audio chunks (16kHz)")
+        print(f"  Received from gateway: {self.received_chunks} audio chunks (16kHz)")
         print(f"  Final state: {self.current_state}")
+        print()
+        print("Audio Format:")
+        print(f"  Microphone: {MIC_SAMPLE_RATE}Hz (ESP32 simulation)")
+        print(f"  Speakers: {SPEAKER_SAMPLE_RATE}Hz (ESP32 simulation)")
+        print(f"  Gateway resamples: 24kHz → 16kHz automatically")
         print(f"{'='*60}")
         print("✅ Session ended")
 
@@ -374,7 +396,11 @@ Examples:
     
     print("=" * 60)
     print("   WebSocket Audio Bridge - Gateway Test")
+    print("   (Simulates ESP32 Voice Preview - 16kHz)")
     print("=" * 60)
+    print()
+    print("🔊 Audio: 16kHz microphone + 16kHz speakers")
+    print("🎯 Tests: Gateway resampling (24kHz → 16kHz)")
     print()
     
     bridge = WebSocketAudioBridge(

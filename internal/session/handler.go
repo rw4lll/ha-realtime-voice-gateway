@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/rw4lll/ha-realtime-voice-gateway/internal/audio"
 	"github.com/rw4lll/ha-realtime-voice-gateway/internal/backend"
 	"github.com/rw4lll/ha-realtime-voice-gateway/internal/websocket"
 	"go.uber.org/zap"
@@ -25,7 +26,8 @@ type Handler struct {
 	// Tool execution
 	toolExecutor ToolExecutor
 
-	// Audio buffering (prevents premature audio-start)
+	// Audio processing
+	audioProcessor     *audio.Processor
 	audioStartBufferMs int
 	audioStartSent     atomic.Bool
 	audioSuppressed    atomic.Bool
@@ -51,6 +53,7 @@ type Config struct {
 	WebSocketSession *websocket.Session
 	BackendSession   *backend.Session
 	ToolExecutor     ToolExecutor
+	AudioProcessor   *audio.Processor // Optional audio processor for resampling
 	Logger           *zap.Logger
 	AudioBufferMs    int           // Audio start buffer duration
 	SafetyTimeout    time.Duration // Max session duration (default: 5 min)
@@ -76,8 +79,23 @@ func NewHandler(cfg Config) *Handler {
 		ctx:                ctx,
 		cancel:             cancel,
 		toolExecutor:       cfg.ToolExecutor,
+		audioProcessor:     cfg.AudioProcessor,
 		audioStartBufferMs: cfg.AudioBufferMs,
 		safetyTimeout:      cfg.SafetyTimeout,
+	}
+
+	// Log audio processing configuration
+	if h.audioProcessor != nil {
+		stats := h.audioProcessor.GetStats()
+		if stats.Enabled {
+			h.logger.Info("audio resampling enabled for session",
+				zap.String("algorithm", stats.Algorithm),
+				zap.Int("source_rate", stats.SourceRate),
+				zap.Int("target_rate", stats.TargetRate),
+				zap.Float64("ratio", stats.Ratio))
+		} else {
+			h.logger.Debug("audio resampling disabled for session")
+		}
 	}
 
 	return h
@@ -197,9 +215,30 @@ func (h *Handler) forwardAudioToDevice() {
 				continue
 			}
 
+			// Process audio (resampling if needed)
+			processedData := audioFrame.Data
+			if h.audioProcessor != nil {
+				var err error
+				processedData, err = h.audioProcessor.Process(audioFrame.Data)
+				if err != nil {
+					h.logger.Error("audio processing failed",
+						zap.Error(err),
+						zap.Int("input_size", len(audioFrame.Data)))
+					continue
+				}
+
+				// Log size changes on first frame or periodically
+				if frameCount == 1 || (frameCount%100 == 0 && len(processedData) != len(audioFrame.Data)) {
+					h.logger.Debug("audio resampling applied",
+						zap.Int("input_bytes", len(audioFrame.Data)),
+						zap.Int("output_bytes", len(processedData)),
+						zap.Int("frame_count", frameCount))
+				}
+			}
+
 			// Buffer audio until we have confidence
 			if !audioStartSent {
-				audioBuffer = append(audioBuffer, audioFrame.Data)
+				audioBuffer = append(audioBuffer, processedData)
 				if len(audioBuffer) >= bufferFrames {
 					// Flush buffer
 					h.flushAudioBuffer(audioBuffer)
@@ -213,7 +252,7 @@ func (h *Handler) forwardAudioToDevice() {
 
 			// Forward directly after buffer flushed
 			select {
-			case h.wsSession.AudioOut <- audioFrame.Data:
+			case h.wsSession.AudioOut <- processedData:
 				// Sent successfully
 			case <-h.ctx.Done():
 				return
