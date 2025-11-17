@@ -5,36 +5,37 @@ This document provides a deep dive into the technical architecture of the Home A
 ## System Architecture
 
 ```
-[HA Voice Device]                    [Home Assistant]
+[ESP32 Voice Device]                 [Home Assistant]
    ┌──────────┐                         ┌──────────┐
    │Wake Word │                         │ Services │
-   │Mic/Spkr  │                         │WebSocket │
+   │Mic/Spkr  │                         │REST API  │
    └────┬─────┘                         └────┬─────┘
         │                                    │
-        │ Wyoming Protocol (TCP)             │ WebSocket
-        │ • audio-start/chunk/stop           │ (persistent)
-        │ • Event-based streaming            │
+        │ WebSocket (ws://gateway:8080)     │ HTTPS
+        │ • JSON control messages            │ (persistent)
+        │ • Binary PCM audio                 │
         ▼                                    │
    ┌─────────────────────────────────────┐  │
    │   Realtime Voice Gateway            │  │
    │                                     │  │
    │  ┌────────────────────────────┐    │  │
-   │  │ Wyoming Server (STT+TTS)   │    │  │
-   │  │ • Handles device protocol  │    │  │
-   │  │ • Audio chunk streaming    │    │  │
+   │  │ WebSocket Server           │    │  │
+   │  │ • HTTP upgrade handler     │    │  │
+   │  │ • Full-duplex streaming    │    │  │
    │  └────────────┬───────────────┘    │  │
    │               │                     │  │
    │  ┌────────────▼───────────────┐    │  │
-   │  │ Session Manager            │    │  │
-   │  │ • Multi-device/user        │    │  │
-   │  │ • Conversation history     │    │  │
+   │  │ Session Handler            │    │  │
+   │  │ • Per-device state         │    │  │
+   │  │ • Lifecycle management     │    │  │
+   │  │ • Safety timeouts          │    │  │
    │  └────────────┬───────────────┘    │  │
    │               │                     │  │
    │  ┌────────────▼───────────────┐    │  │
    │  │ Audio Pipeline             │    │  │
-   │  │ • Format conversion        │    │  │
-   │  │ • VAD (barge-in detect)    │    │  │
-   │  │ • Buffer management        │    │  │
+   │  │ • Bidirectional streaming  │    │  │
+   │  │ • Audio buffering (500ms)  │    │  │
+   │  │ • Barge-in support         │    │  │
    │  └────────────┬───────────────┘    │  │
    │               │                     │  │
    │  ┌────────────▼───────────────┐    │  │
@@ -45,13 +46,13 @@ This document provides a deep dive into the technical architecture of the Home A
    │  ┌─▼─────────┐  ┌─────────▼──┐    │  │
    │  │ Gemini    │  │ OpenAI     │    │  │
    │  │ Live      │  │ Realtime   │    │  │
-   │  │ (default) │  │ (optional) │    │  │
+   │  │ (default) │  │ (planned)  │    │  │
    │  └───────────┘  └────────────┘    │  │
    │                                     │  │
    │  ┌─────────────────────────────┐   │  │
    │  │ HA Integration              │◄──┘  │
    │  │ • Tool registry & executor  │      │
-   │  │ • State cache & queries     │      │
+   │  │ • Autodiscovery             │      │
    │  │ • Service call safety       │      │
    │  └─────────────────────────────┘      │
    └───────────────────────────────────────┘
@@ -65,16 +66,15 @@ This document provides a deep dive into the technical architecture of the Home A
 
 | Layer | Responsibility | Status | Key Packages |
 |-------|---------------|--------|--------------|
-| `internal/protocol/wyoming` | Wyoming TCP server & event handling | ✅ **Complete** | `net`, `encoding/json` |
+| `internal/websocket` | WebSocket server & session management | ✅ **Complete** | `gorilla/websocket`, `net/http` |
+| `internal/session` | Session handler (audio/events/tools) | ✅ **Complete** | channels & goroutines |
 | `internal/backend` | LLM abstraction (event-driven interface) | ✅ **Complete** | custom interface |
-| `internal/backend/gemini` | Gemini Live WebSocket integration | ✅ **Complete** | `nhooyr.io/websocket` |
-| `internal/backend/openai` | OpenAI Realtime WebSocket/WebRTC | ⏳ Planned | `github.com/pion/webrtc/v4` |
-| `internal/pipeline` | Audio+event pipeline, barge-in | ✅ **Complete** | channels & goroutines |
-| `internal/ha` | Home Assistant API client (REST + WS) | ✅ **Complete** | `net/http`, `gorilla/websocket` |
-| `internal/session` | Multi-device session management | ⏳ Planned | `sync.Map` |
-| `internal/audio` | Transcoding, VAD, buffer management | ⏳ Future | `github.com/go-audio/audio` |
+| `internal/backend/gemini` | Gemini Live WebSocket integration | ✅ **Complete** | `google.golang.org/genai` |
+| `internal/backend/openai` | OpenAI Realtime WebSocket | ⏳ Planned | TBD |
+| `internal/pipeline` | Audio+event pipeline orchestration | ✅ **Complete** | channels & goroutines |
+| `internal/ha` | Home Assistant API client (REST) | ✅ **Complete** | `net/http` |
+| `internal/config` | Configuration management | ✅ **Complete** | `gopkg.in/yaml.v3` |
 | `internal/metrics` | Prometheus metrics | ⏳ Future | `prometheus/client_golang` |
-| `internal/config` | Configuration management | ✅ **Complete** | `github.com/spf13/viper` |
 
 ### Project Structure
 
@@ -84,52 +84,33 @@ ha-realtime-voice-gateway/
 │   └── gateway/
 │       └── main.go                    # Entry point
 ├── internal/
-│   ├── protocol/
-│   │   └── wyoming/
-│   │       ├── server.go             # Wyoming TCP server
-│   │       ├── events.go             # Event types & parsing
-│   │       ├── session.go            # Per-connection session
-│   │       └── codec.go              # JSONL + binary codec
-│   ├── backend/
-│   │   ├── interface.go              # Backend interface (event-driven)
-│   │   ├── manager.go                # Backend lifecycle & routing
-│   │   ├── events.go                 # Common event types
-│   │   ├── gemini/
-│   │   │   ├── client.go             # Gemini Live WebSocket
-│   │   │   ├── session.go            # Gemini session management
-│   │   │   └── audio.go              # Gemini audio format handling
-│   │   └── openai/
-│   │       ├── client.go             # OpenAI Realtime API
-│   │       ├── session.go            # OpenAI session
-│   │       └── webrtc.go             # WebRTC handling
-│   ├── audio/
-│   │   ├── transcoder.go             # Format conversion
-│   │   ├── vad.go                    # Voice Activity Detection
-│   │   ├── buffer.go                 # Ring buffers, frame handling
-│   │   └── formats.go                # Audio format definitions
-│   ├── ha/
-│   │   ├── client.go                 # REST + WebSocket client
-│   │   ├── tools.go                  # Tool definitions & registry
-│   │   ├── executor.go               # Safe tool execution
-│   │   ├── cache.go                  # State caching
-│   │   └── types.go                  # HA API types
+│   ├── websocket/
+│   │   ├── server.go                  # WebSocket HTTP server
+│   │   ├── session.go                 # Per-connection session
+│   │   └── protocol.go                # Message types & encoding
 │   ├── session/
-│   │   ├── manager.go                # Multi-device session management
-│   │   ├── session.go                # Per-session state
-│   │   └── storage.go                # Optional persistence interface
+│   │   └── handler.go                 # Session logic (audio/events/tools)
+│   ├── backend/
+│   │   ├── interface.go               # Backend interface (event-driven)
+│   │   ├── events.go                  # Common event types
+│   │   ├── mock.go                    # Mock backend for testing
+│   │   └── gemini/
+│   │       ├── client.go              # Gemini Live API client
+│   │       ├── session.go             # Gemini session management
+│   │       └── audio.go               # Audio format handling
+│   ├── ha/
+│   │   ├── client.go                  # REST API client
+│   │   ├── executor.go                # Tool executor
+│   │   ├── autodiscovery.go           # Entity/service discovery
+│   │   └── tools.go                   # Tool definitions
 │   ├── pipeline/
-│   │   ├── pipeline.go               # Main audio+event pipeline
-│   │   ├── barge_in.go               # Interruption handling
-│   │   └── latency.go                # Latency tracking
-│   ├── config/
-│   │   └── config.go                 # Configuration management
-│   └── metrics/
-│       └── metrics.go                # Prometheus metrics
-├── pkg/
-│   └── events/                       # Shared event types
-│       └── events.go
-├── docs/                              # Documentation
-├── test/                              # Testing utilities
+│   │   ├── pipeline.go                # Main pipeline orchestration
+│   │   └── metrics.go                 # Metrics collection
+│   └── config/
+│       ├── config.go                  # Configuration structs
+│       └── ha_config.go               # HA-specific config (YAML)
+├── docs/                               # Documentation
+├── test/                               # Testing utilities
 ├── docker-compose.yml
 ├── Dockerfile
 ├── .env.example
@@ -137,58 +118,106 @@ ha-realtime-voice-gateway/
 └── go.sum
 ```
 
-## Wyoming Protocol Integration
+## WebSocket Protocol Integration
 
-The gateway implements Wyoming protocol servers to communicate with HA Voice Preview devices. Wyoming is an **event-based streaming protocol** (JSONL + PCM binary payloads) that supports:
+The gateway implements a WebSocket server to communicate with ESP32 devices running modified streaming firmware. This is a **message-based protocol** (JSON control + binary PCM audio) that supports:
 
-- **Continuous audio streaming** via `audio-chunk` events
-- **Stream boundaries** with `audio-start` / `audio-stop`
-- **Bidirectional communication** (device ↔ gateway)
-- **Raw PCM audio** (16kHz, 16-bit, mono)
+- **Full-duplex streaming** - Bidirectional audio flow
+- **JSON control messages** - State synchronization (`listening`, `thinking`, `speaking`, `done`)
+- **Binary audio frames** - Raw PCM audio (16kHz, 16-bit, mono)
+- **Session lifecycle** - Start, timeouts, completion
+- **Barge-in support** - Interrupt AI mid-response
 
-### Wyoming Protocol Flow
+### WebSocket Protocol Flow
 
-```json
-// Device → Gateway (user speaking)
-{"type": "audio-start", "data": {"rate": 16000, "width": 2, "channels": 1}}\n
-{"type": "audio-chunk", "payload_length": 4096}\n
-<4096 bytes of PCM audio>
-{"type": "audio-chunk", "payload_length": 4096}\n
-<4096 bytes of PCM audio>
-{"type": "audio-stop"}\n
+```
+// 1. Connection Established
+ESP32 → Gateway: WebSocket Upgrade (ws://gateway:8080/voice-stream)
+Gateway → ESP32: {"state": "listening"}
 
-// Gateway → Device (LLM responding)
-{"type": "audio-start", "data": {"rate": 16000, "width": 2, "channels": 1}}\n
-{"type": "audio-chunk", "payload_length": 4096}\n
-<4096 bytes of PCM audio from LLM>
-{"type": "audio-stop"}\n
+// 2. User Speaks
+ESP32 → Gateway: Binary PCM audio (continuous stream)
+Gateway → Backend: Audio frames forwarded
+
+// 3. Backend Detects End-of-Speech (VAD)
+Gateway → ESP32: {"state": "thinking"}
+
+// 4. Backend Starts Speaking
+Gateway → ESP32: {"state": "speaking"}
+Gateway → ESP32: Binary PCM audio (AI response, continuous)
+
+// 5. Backend Finishes Response
+Gateway waits 3s for silence...
+Gateway → ESP32: {"state": "done"}
+
+// 6. Optional: Session Continue or Close
+ESP32 can send new audio (continue conversation)
+OR ESP32 closes WebSocket (end session)
 ```
 
-### Why Wyoming Protocol Works
+### Message Format
 
-**Initially, it seemed Wyoming might be too limited** (being designed for traditional STT/TTS pipelines), but it's actually **ideal** for this use case:
+**Control Messages (JSON, WebSocket text frames):**
+```json
+{"state": "listening"}   // Ready for user speech
+{"state": "thinking"}    // Processing input
+{"state": "speaking"}    // AI is responding
+{"state": "done"}        // Conversation complete
+{"error": "message"}     // Error occurred
+```
 
-- ✅ **Event-based streaming**: Uses JSONL + binary payloads (not request-response)
-- ✅ **Continuous audio chunks**: `audio-chunk` events stream PCM audio in real-time
-- ✅ **Stream boundaries**: `audio-start` / `audio-stop` for session management
-- ✅ **Bidirectional**: Device ↔ Gateway communication works seamlessly
-- ✅ **No device reflashing needed**: Works with HA Voice Preview devices out-of-the-box
+**Audio Messages (Binary, WebSocket binary frames):**
+- **Format**: Raw PCM, 16kHz, 16-bit, mono (little-endian)
+- **Direction**: Bidirectional (device ↔ gateway)
+- **Streaming**: Continuous, no frame headers or delimiters
+- **Chunk Size**: Variable (typically 320-640 bytes, 10-20ms audio)
+
+### Why WebSocket Works
+
+1. **Low Latency** - Direct connection, persistent, no HTTP overhead per message
+2. **Full Duplex** - Can send audio while receiving responses (barge-in)
+3. **Simple Protocol** - JSON + binary, easy to implement on ESP32
+4. **Browser Compatible** - Can test from web browsers using JavaScript
+5. **Firewall Friendly** - Uses standard HTTP/HTTPS ports
+
+### WebSocket vs. Wyoming Protocol
+
+| Feature | WebSocket | Wyoming (Old) |
+|---------|-----------|---------------|
+| **Transport** | WebSocket (HTTP upgrade) | Raw TCP socket |
+| **Control Messages** | JSON (text frames) | JSONL + length prefixes |
+| **Audio** | Binary frames | JSONL event + binary payload |
+| **Connection** | Standard HTTP upgrade | Custom handshake |
+| **Browser Testing** | ✅ Native support | ❌ Requires custom client |
+| **Device Firmware** | ✅ Modified for streaming | ✅ Standard HA Voice Preview |
+
+**Why We Switched:** WebSocket provides better latency, simpler implementation, and native browser support for testing, while Wyoming required Home Assistant pipeline integration we didn't need.
 
 ## Audio Flow
 
-1. **Device detects wake word** → sends `audio-start`, streams `audio-chunk` (PCM) → Gateway
-2. **Gateway** transcodes if needed → forwards to LLM backend (Gemini/OpenAI)
-3. **LLM** streams back audio in real-time → Gateway receives chunks
-4. **Gateway** converts format if needed → sends `audio-chunk` to device (Wyoming)
-5. **Device** plays audio immediately (low-latency streaming)
-6. **VAD** detects user interruption → triggers barge-in (stops LLM audio)
+1. **Device detects wake word (or user presses button)** → Opens WebSocket connection
+2. **Gateway** sends `{"state": "listening"}` → Device starts streaming PCM audio
+3. **Gateway** forwards audio → LLM backend (Gemini/OpenAI)
+4. **LLM** processes speech (VAD detects end) → Gateway sends `{"state": "thinking"}`
+5. **LLM** starts generating audio response → Gateway sends `{"state": "speaking"}`
+6. **Gateway** streams audio back → Device plays immediately (low-latency)
+7. **User interrupts (barge-in)** → Device sends new audio → Gateway suppresses old audio
+8. **LLM finishes** + 3s silence → Gateway sends `{"state": "done"}`
+
+### Audio Buffering Strategy
+
+To prevent premature audio-start events:
+- **Gateway buffers** first 500ms of backend audio (configurable)
+- **Ensures** backend is actually speaking (not just a glitch)
+- **Flushes buffer** once confident audio is real
+- **Prevents** false-positive "speaking" states
 
 ## Tool Call Flow
 
 1. **LLM** needs to call Home Assistant service (e.g., "turn on living room light")
-2. **Backend** emits `ToolCall` event → Gateway receives
-3. **Gateway** validates against allow-list → executes HA API call (async)
-4. **HA** returns result → Gateway sends back to LLM
+2. **Backend** emits `ToolCall` event → Gateway receives via `Events` channel
+3. **Gateway** validates against allow-list → Executes HA API call (async)
+4. **HA** returns result → Gateway sends to backend via `ToolResults` channel
 5. **LLM** continues speaking with result incorporated
 
 **Optimization**: Tool calls happen asynchronously while LLM continues generating audio ("Let me turn that on for you..." plays while API call executes)
@@ -205,7 +234,7 @@ type Backend interface {
     Init(ctx context.Context, cfg Config) error
     
     // Start a new session and return bidirectional channels
-    StartSession(ctx context.Context, req SessionRequest) (*Session, error)
+    StartSession(ctx context.Context, req SessionConfig) (*Session, error)
     
     // Register available Home Assistant tools
     RegisterTools(tools []Tool) error
@@ -225,25 +254,20 @@ type Session struct {
     AudioOut    <-chan AudioFrame    // LLM → Gateway (response audio)
     
     // Event channel (LLM → Gateway)
-    Events      <-chan Event         // Transcripts, tool calls, errors, etc.
+    Events      <-chan *Event        // Transcripts, tool calls, errors
     
     // Tool results channel (Gateway → LLM)
     ToolResults chan<- ToolResult    // Results of HA tool executions
     
-    // Control channels
-    Interrupt   chan<- struct{}      // Signal barge-in
+    // Control
     Close       func() error         // Close this session
-    
-    Metadata    SessionMetadata
 }
 
-type SessionRequest struct {
+type SessionConfig struct {
     SessionID    string
     DeviceID     string
-    UserID       string
     SystemPrompt string
     AudioFormat  AudioFormat
-    Context      map[string]interface{} // Previous conversation context
 }
 
 type Event struct {
@@ -255,41 +279,47 @@ type Event struct {
 
 type EventType string
 const (
-    EventTranscriptDelta  EventType = "transcript_delta"  // Partial transcript
-    EventTranscriptDone   EventType = "transcript_done"   // Final transcript
-    EventAudioStart       EventType = "audio_start"       // LLM starts speaking
-    EventAudioEnd         EventType = "audio_end"         // LLM stops speaking
-    EventToolCall         EventType = "tool_call"         // LLM requests tool
-    EventToolCallDone     EventType = "tool_call_done"    // Tool execution complete
-    EventError            EventType = "error"             // Error occurred
-    EventSessionEnd       EventType = "session_end"       // Session terminated
+    EventTranscriptDelta    EventType = "transcript_delta"    // Partial transcript
+    EventTranscriptDone     EventType = "transcript_done"     // Final transcript
+    EventAudioStart         EventType = "audio_start"         // LLM starts speaking
+    EventAudioEnd           EventType = "audio_end"           // LLM stops speaking
+    EventAudioInterrupted   EventType = "audio_interrupted"   // User interrupted (barge-in)
+    EventToolCall           EventType = "tool_call"           // LLM requests tool
+    EventToolCallDone       EventType = "tool_call_done"      // Tool execution complete
+    EventError              EventType = "error"               // Error occurred
+    EventSessionEnd         EventType = "session_end"         // Session terminated
 )
 
 type ToolCall struct {
     ID        string                 // Unique call ID
-    Name      string                 // e.g., "homeassistant.turn_on"
+    Name      string                 // e.g., "light.turn_on"
     Arguments map[string]interface{} // Tool parameters
 }
 
 type ToolResult struct {
-    CallID string                 // Matches ToolCall.ID
-    Result interface{}            // Success result
-    Error  string                 // Error message if failed
+    CallID    string                 // Matches ToolCall.ID
+    Result    interface{}            // Success result
+    Error     string                 // Error message if failed
+    Timestamp time.Time
+}
+
+type AudioFrame struct {
+    Data      []byte     // Raw PCM audio
+    Timestamp time.Time
 }
 
 type AudioFormat struct {
-    SampleRate   int    // e.g., 16000
-    Channels     int    // e.g., 1 (mono)
-    BitsPerSample int   // e.g., 16
-    Encoding     string // "pcm_s16le", "opus", etc.
+    SampleRate    int    // e.g., 16000
+    Channels      int    // e.g., 1 (mono)
+    BitsPerSample int    // e.g., 16
+    Encoding      string // "pcm", "opus", etc.
 }
 
 type Capabilities struct {
     SupportsStreaming     bool
     SupportsToolCalling   bool
-    SupportsBargeIn       bool
+    SupportsVAD           bool
     SupportedAudioFormats []AudioFormat
-    MaxAudioChunkSize     int
 }
 ```
 
@@ -298,31 +328,30 @@ type Capabilities struct {
 1. **Asynchronous by nature**: LLMs stream responses while processing tool calls
 2. **Non-blocking tool execution**: Gateway can execute HA calls while LLM continues talking
 3. **Multiple event types**: Transcripts, audio, tool calls, errors all flow through same pattern
-4. **Barge-in support**: Can interrupt LLM mid-response
+4. **Barge-in support**: Can interrupt LLM mid-response via `EventAudioInterrupted`
 5. **Easy to extend**: New event types don't break the interface
 
 ### Example Backend Implementation Flow
 
 ```go
 // Backend receives audio and emits events
-func (g *GeminiBackend) StartSession(ctx context.Context, req SessionRequest) (*Session, error) {
+func (g *GeminiBackend) StartSession(ctx context.Context, cfg SessionConfig) (*Session, error) {
     sess := &Session{
-        ID:          req.SessionID,
+        ID:          cfg.SessionID,
         AudioIn:     make(chan AudioFrame, 100),
         AudioOut:    make(chan AudioFrame, 100),
-        Events:      make(chan Event, 50),
+        Events:      make(chan *Event, 50),
         ToolResults: make(chan ToolResult, 10),
-        Interrupt:   make(chan struct{}, 1),
     }
     
-    // Connect to Gemini Live WebSocket
-    ws, err := g.connectWebSocket(ctx)
+    // Connect to Gemini Live API
+    client, err := g.connectGeminiLive(ctx, cfg)
     
     // Start goroutines to handle bidirectional streams
-    go g.audioInputLoop(sess, ws)   // AudioIn → Gemini
-    go g.audioOutputLoop(sess, ws)  // Gemini → AudioOut
-    go g.eventLoop(sess, ws)        // Gemini events → Events channel
-    go g.toolResultLoop(sess, ws)   // ToolResults → Gemini
+    go g.audioInputLoop(sess, client)   // AudioIn → Gemini
+    go g.audioOutputLoop(sess, client)  // Gemini → AudioOut
+    go g.eventLoop(sess, client)        // Gemini events → Events channel
+    go g.toolResultLoop(sess, client)   // ToolResults → Gemini
     
     return sess, nil
 }
@@ -331,36 +360,87 @@ func (g *GeminiBackend) StartSession(ctx context.Context, req SessionRequest) (*
 ### Gateway Pipeline Example
 
 ```go
-// Gateway coordinates between Wyoming device, Backend, and HA
-func (p *Pipeline) Run(wyomingSession *wyoming.Session, backendSession *backend.Session) {
-    // Audio forwarding
-    go p.forwardAudio(wyomingSession.AudioIn, backendSession.AudioIn)
-    go p.forwardAudio(backendSession.AudioOut, wyomingSession.AudioOut)
+// internal/pipeline/pipeline.go
+// Gateway coordinates between WebSocket device, Backend, and HA
+
+func (p *Pipeline) HandleWebSocketSession(ws *websocket.Session) {
+    // Start backend session
+    backendSession, err := p.backend.StartSession(ctx, backend.SessionConfig{
+        SessionID:    ws.ID,
+        DeviceID:     "esp32-voice-device",
+        SystemPrompt: p.systemPrompt,
+        AudioFormat:  backend.AudioFormat{
+            SampleRate:    16000,
+            Channels:      1,
+            BitsPerSample: 16,
+            Encoding:      "pcm",
+        },
+    })
     
-    // Event handling
-    for event := range backendSession.Events {
+    // Create session handler (manages audio/events/tools)
+    handler := session.NewHandler(session.Config{
+        WebSocketSession: ws,
+        BackendSession:   backendSession,
+        ToolExecutor:     p.toolExecutor,
+        Logger:           p.logger,
+        AudioBufferMs:    500,
+        SafetyTimeout:    5 * time.Minute,
+    })
+    
+    // Start session (blocks until complete)
+    handler.Start()
+    handler.Wait()
+}
+```
+
+### Session Handler Example
+
+```go
+// internal/session/handler.go
+// Session handler manages a single voice conversation
+
+func (h *Handler) Start() {
+    // Send initial state to device
+    h.ws.SendState("listening")
+    
+    // Start goroutines for bidirectional flow
+    go h.forwardAudioToBackend()           // Device → Backend
+    go h.forwardBackendAudioToDevice()     // Backend → Device (with buffering)
+    go h.handleBackendEvents()             // Process backend events
+    go h.monitorSessionLifecycle()         // Timeouts and completion
+}
+
+func (h *Handler) handleBackendEvents() {
+    for event := range h.backendSession.Events {
         switch event.Type {
-        case backend.EventToolCall:
-            go p.handleToolCall(event.Data.(backend.ToolCall), backendSession)
-        
         case backend.EventTranscriptDone:
-            p.logTranscript(event.Data.(string))
-        
+            h.ws.SendState("thinking")
+            
+        case backend.EventAudioStart:
+            h.ws.SendState("speaking")
+            
+        case backend.EventToolCall:
+            go h.executeToolCall(event.Data.(backend.ToolCall))
+            
+        case backend.EventAudioInterrupted:
+            h.suppressAudio()  // User interrupted - stop playback
+            
         case backend.EventError:
-            p.handleError(event.Data.(error))
+            h.ws.SendError(event.Data.(error).Error())
         }
     }
 }
 
-func (p *Pipeline) handleToolCall(call backend.ToolCall, session *backend.Session) {
-    // Validate and execute HA service call
-    result, err := p.haClient.ExecuteTool(call.Name, call.Arguments)
+func (h *Handler) executeToolCall(call backend.ToolCall) {
+    // Execute via Home Assistant
+    result, err := h.toolExecutor.Execute(h.ctx, &call)
     
-    // Send result back to LLM (non-blocking)
-    session.ToolResults <- backend.ToolResult{
-        CallID: call.ID,
-        Result: result,
-        Error:  err.Error(),
+    // Send result back to backend
+    h.backendSession.ToolResults <- backend.ToolResult{
+        CallID:    call.ID,
+        Result:    result,
+        Error:     err.Error(),
+        Timestamp: time.Now(),
     }
 }
 ```
@@ -371,77 +451,84 @@ func (p *Pipeline) handleToolCall(call backend.ToolCall, session *backend.Sessio
 ✅ **Provider-agnostic**: Same tool schema across all LLMs  
 ✅ **Low latency**: Async tool calls don't block audio streaming  
 ✅ **Type-safe**: Strong typing for events and data structures  
-✅ **Testable**: Easy to mock backends for testing  
-✅ **Observable**: All events flow through channels (easy to log/monitor)
+✅ **Testable**: Easy to mock backends and WebSocket sessions  
+✅ **Observable**: All events flow through channels (easy to log/monitor)  
+✅ **Production-ready**: Timeouts, error handling, graceful shutdown
+
+## Session Lifecycle
+
+```
+1. Device connects WebSocket
+   ↓
+2. Gateway sends {"state": "listening"}
+   ↓
+3. Device streams audio (user speaking)
+   ↓
+4. Backend detects end-of-speech (VAD)
+   ↓
+5. Gateway sends {"state": "thinking"}
+   ↓
+6. Backend generates response
+   ↓
+7. Gateway sends {"state": "speaking"}
+   ↓
+8. Gateway streams audio to device
+   ↓
+9. Backend finishes + 3s silence
+   ↓
+10. Gateway sends {"state": "done"}
+    ↓
+11. Device closes OR continues (new audio)
+```
+
+### Safety Controls
+
+- **SafetyTimeout** (default: 5 minutes) - Max session duration
+- **SilenceTimeout** (default: 3 seconds) - End conversation after silence
+- **AudioBufferMs** (default: 500ms) - Buffer before starting playback
+- **Read/Write Timeouts** - Prevent hung connections
+- **Graceful Shutdown** - Clean up all resources on exit
 
 ## Observability & Monitoring
-
-### Prometheus Metrics
-
-```prometheus
-# Latency metrics
-voice_gateway_latency_seconds{stage="wake_to_response"} 0.45
-voice_gateway_latency_seconds{stage="llm_first_audio"} 0.32
-voice_gateway_audio_rtt_seconds 0.15
-
-# Tool call metrics
-voice_gateway_tool_calls_total{domain="light",result="success"} 142
-voice_gateway_tool_calls_total{domain="lock",result="denied"} 3
-voice_gateway_tool_call_duration_seconds{domain="light"} 0.08
-
-# Session metrics
-voice_gateway_active_sessions 5
-voice_gateway_sessions_total{backend="gemini"} 234
-voice_gateway_barge_ins_total 18
-
-# Audio metrics
-voice_gateway_audio_chunks_total{direction="in"} 45823
-voice_gateway_audio_chunks_total{direction="out"} 38192
-voice_gateway_audio_buffer_overruns_total 0
-
-# Error metrics
-voice_gateway_errors_total{type="backend_error"} 2
-voice_gateway_errors_total{type="tool_denied"} 5
-```
 
 ### Structured Logging
 
 ```json
 {
-  "timestamp": "2025-11-02T12:34:56Z",
+  "timestamp": "2025-11-17T12:34:56Z",
   "level": "info",
   "msg": "tool_call_executed",
   "session_id": "abc123",
-  "device_id": "living_room_voice",
-  "user_id": "alice",
-  "tool": "homeassistant.turn_on",
+  "device_id": "esp32-living-room",
+  "tool": "light.turn_on",
   "entity_id": "light.living_room",
   "duration_ms": 85,
   "result": "success"
 }
 ```
 
-### Health Checks
+### Metrics (Future)
 
-```bash
-# Health endpoint
-GET /health
+```prometheus
+# Session metrics
+voice_gateway_sessions_active 3
+voice_gateway_sessions_total{backend="gemini"} 142
 
-{
-  "status": "healthy",
-  "backend": "gemini",
-  "backend_connected": true,
-  "ha_connected": true,
-  "active_sessions": 5,
-  "uptime_seconds": 86400
-}
+# Audio metrics
+voice_gateway_audio_frames_in 45823
+voice_gateway_audio_frames_out 38192
+
+# Tool call metrics
+voice_gateway_tool_calls_total{domain="light",result="success"} 89
+voice_gateway_tool_call_duration_seconds{domain="light"} 0.08
+
+# Error metrics
+voice_gateway_errors_total{type="backend_error"} 2
 ```
 
 ## Default Provider
 
-By default, the Gateway uses **Gemini Live** — thanks to its free tier and simple WebSocket streaming API — to minimize entry cost during development.
-
-Switching to OpenAI Realtime (or others) requires only changing `LLM_BACKEND` and relevant keys in `.env`.
+The gateway uses **Gemini Live** by default — thanks to its free tier, simple WebSocket API, and excellent voice quality. Switching to OpenAI Realtime (or others) requires only changing `BACKEND_TYPE` in `.env`.
 
 ## See Also
 
@@ -450,3 +537,4 @@ Switching to OpenAI Realtime (or others) requires only changing `LLM_BACKEND` an
 - [AUTODISCOVERY.md](AUTODISCOVERY.md) - Home Assistant autodiscovery
 - [VAD_TUNING_GUIDE.md](VAD_TUNING_GUIDE.md) - Voice activity detection tuning
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Common issues and solutions
+- [STREAMING_GATEWAY_PROTOCOL.md](../STREAMING_GATEWAY_PROTOCOL.md) - WebSocket protocol spec

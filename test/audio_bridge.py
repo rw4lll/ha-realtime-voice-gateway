@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Wyoming Audio Bridge - Test gateway with laptop microphone and speakers.
+WebSocket Audio Bridge - Test gateway with laptop microphone and speakers.
 
-This script bridges your laptop's audio to the Wyoming gateway, allowing you
-to test the complete voice pipeline (including Gemini Live) without physical hardware.
+This script bridges your laptop's audio to the WebSocket gateway, allowing you
+to test the complete voice pipeline (including LLM backends) without physical hardware.
 
 Requirements:
-    pip install pyaudio
+    pip install pyaudio websocket-client
 
 Usage:
     # Basic test (30 seconds)
@@ -16,12 +16,10 @@ Usage:
     python3 audio_bridge.py --duration 60
     
     # Custom gateway address
-    python3 audio_bridge.py --host 192.168.1.100 --port 10200
+    python3 audio_bridge.py --host 192.168.1.100 --port 8080
 """
 
-import socket
 import json
-import struct
 import threading
 import queue
 import time
@@ -42,101 +40,118 @@ except ImportError:
     print("  pip install pyaudio")
     sys.exit(1)
 
-# Audio configuration (must match Wyoming/Gemini format)
+try:
+    import websocket
+except ImportError:
+    print("❌ websocket-client not installed!")
+    print("\nInstall with:")
+    print("  pip install websocket-client")
+    sys.exit(1)
+
+# Audio configuration (must match gateway/LLM format)
 SAMPLE_RATE = 16000  # 16kHz
 CHANNELS = 1         # Mono
 SAMPLE_WIDTH = 2     # 16-bit (2 bytes)
 CHUNK_SIZE = 160     # 10ms at 16kHz (160 samples = 320 bytes)
 
 
-class WyomingAudioBridge:
-    """Bridges laptop audio to/from Wyoming gateway."""
+class WebSocketAudioBridge:
+    """Bridges laptop audio to/from WebSocket gateway."""
     
-    def __init__(self, host="localhost", port=10200, verbose=False):
+    def __init__(self, host="localhost", port=8080, path="/voice-stream", verbose=False):
         self.host = host
         self.port = port
+        self.path = path
         self.verbose = verbose
-        self.sock = None
+        self.ws = None
         self.audio = pyaudio.PyAudio()
         self.running = False
         
         # Queues for audio data
-        self.recv_queue = queue.Queue()
+        self.recv_audio_queue = queue.Queue()
         
-        # Output audio format (from gateway's audio-start event)
-        self.output_rate = None
-        self.output_width = None
-        self.output_channels = None
+        # Output audio stream
         self.speaker_stream = None
         self.speaker_lock = threading.Lock()
         
         # Stats
         self.sent_chunks = 0
         self.received_chunks = 0
+        self.current_state = "connecting"
         
     def log(self, message):
         """Print log message if verbose."""
         if self.verbose:
             print(f"[DEBUG] {message}")
     
-    def connect(self):
-        """Connect to Wyoming gateway."""
-        print(f"Connecting to gateway at {self.host}:{self.port}...")
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.connect((self.host, self.port))
-        print("✅ Connected to gateway!")
-        
-    def send_event(self, event_type, data=None, payload=None):
-        """Send Wyoming protocol event."""
-        event = {
-            "type": event_type,
-            "data": data or {},
-        }
-        
-        if payload:
-            event["payload_length"] = len(payload)
-        
-        # Send JSONL header
-        json_line = json.dumps(event) + "\n"
-        self.sock.sendall(json_line.encode('utf-8'))
-        
-        # Send binary payload if present
-        if payload:
-            self.sock.sendall(payload)
-        
-        self.log(f"Sent: {event_type}")
+    def on_message(self, ws, message):
+        """Handle incoming WebSocket messages."""
+        # Check if it's binary (audio) or text (JSON control)
+        if isinstance(message, bytes):
+            # Raw PCM audio from gateway
+            self.recv_audio_queue.put(message)
+            self.received_chunks += 1
+            self.log(f"Received audio chunk: {len(message)} bytes")
+        else:
+            # JSON control message
+            try:
+                data = json.loads(message)
+                if "state" in data:
+                    state = data["state"]
+                    self.log(f"State change: {self.current_state} -> {state}")
+                    self.current_state = state
+                    
+                    if state == "listening":
+                        print("🎤 Gateway is listening...")
+                    elif state == "thinking":
+                        print("🤔 Gateway is thinking...")
+                    elif state == "speaking":
+                        print("🔊 Gateway is speaking...")
+                        # Initialize speaker stream if not already done
+                        with self.speaker_lock:
+                            if self.speaker_stream is None:
+                                try:
+                                    self.speaker_stream = self.audio.open(
+                                        format=pyaudio.paInt16,
+                                        channels=CHANNELS,
+                                        rate=SAMPLE_RATE,
+                                        output=True,
+                                        frames_per_buffer=CHUNK_SIZE * 2
+                                    )
+                                    self.log("Speaker stream initialized")
+                                except Exception as e:
+                                    print(f"❌ Failed to open speaker: {e}")
+                    elif state == "done":
+                        print("✅ Session complete")
+                        self.running = False
+                elif "error" in data:
+                    print(f"❌ Error from gateway: {data['error']}")
+                    self.running = False
+                elif "command" in data:
+                    self.log(f"Command received: {data['command']}")
+            except json.JSONDecodeError:
+                self.log(f"Received non-JSON text: {message}")
     
-    def receive_event(self):
-        """Receive Wyoming protocol event."""
-        # Read JSONL line
-        line = b""
-        while True:
-            chunk = self.sock.recv(1)
-            if not chunk:
-                return None
-            if chunk == b"\n":
-                break
-            line += chunk
+    def on_error(self, ws, error):
+        """Handle WebSocket errors."""
+        if self.running:
+            print(f"❌ WebSocket error: {error}")
+    
+    def on_close(self, ws, close_status_code, close_msg):
+        """Handle WebSocket connection close."""
+        self.log(f"WebSocket closed: {close_status_code} - {close_msg}")
+        self.running = False
+    
+    def on_open(self, ws):
+        """Handle WebSocket connection open."""
+        print("✅ Connected to gateway!")
+        self.running = True
         
-        if not line:
-            return None
-            
-        event = json.loads(line.decode('utf-8'))
+        # Start audio capture thread
+        threading.Thread(target=self.mic_thread, daemon=True).start()
         
-        # Read binary payload if present
-        if "payload_length" in event:
-            payload_length = event["payload_length"]
-            payload = b""
-            while len(payload) < payload_length:
-                remaining = payload_length - len(payload)
-                chunk = self.sock.recv(min(4096, remaining))
-                if not chunk:
-                    break
-                payload += chunk
-            event["payload"] = payload
-        
-        self.log(f"Received: {event['type']}")
-        return event
+        # Start speaker playback thread
+        threading.Thread(target=self.speaker_thread, daemon=True).start()
     
     def mic_thread(self):
         """Capture audio from microphone and send to gateway."""
@@ -156,43 +171,35 @@ class WyomingAudioBridge:
             self.running = False
             return
         
-        # Send audio-start
-        self.send_event("audio-start", {
-            "rate": SAMPLE_RATE,
-            "width": SAMPLE_WIDTH,
-            "channels": CHANNELS,
-        })
-        print("✅ Audio stream started - speak now!")
+        print("✅ Microphone ready - speak now!")
         
         try:
             while self.running:
                 # Read audio chunk from microphone
                 audio_data = stream.read(CHUNK_SIZE, exception_on_overflow=False)
                 
-                # Send audio-chunk to gateway
-                self.send_event("audio-chunk", {
-                    "rate": SAMPLE_RATE,
-                    "width": SAMPLE_WIDTH,
-                    "channels": CHANNELS,
-                }, audio_data)
-                
-                self.sent_chunks += 1
-                
+                # Send raw PCM audio to gateway (binary WebSocket message)
+                if self.ws and self.ws.sock and self.ws.sock.connected:
+                    self.ws.send(audio_data, opcode=websocket.ABNF.OPCODE_BINARY)
+                    self.sent_chunks += 1
+                else:
+                    break
+                    
         except Exception as e:
-            print(f"❌ Microphone error: {e}")
+            if self.running:
+                print(f"❌ Microphone error: {e}")
         finally:
             stream.stop_stream()
             stream.close()
-            self.send_event("audio-stop", {})
             print(f"🎤 Microphone stopped (sent {self.sent_chunks} chunks)")
     
     def speaker_thread(self):
         """Receive audio from gateway and play through speakers."""
-        print("🔊 Speaker thread ready (waiting for audio-start from gateway)...")
+        self.log("Speaker thread ready...")
         
         try:
             while self.running:
-                # Wait for speaker stream to be initialized by audio-start event
+                # Wait for speaker stream to be initialized by state transition
                 with self.speaker_lock:
                     stream = self.speaker_stream
                 
@@ -202,12 +209,16 @@ class WyomingAudioBridge:
                 
                 try:
                     # Get audio from queue with timeout
-                    audio_data = self.recv_queue.get(timeout=0.1)
+                    audio_data = self.recv_audio_queue.get(timeout=0.1)
                     stream.write(audio_data)
                 except queue.Empty:
                     continue
+                except Exception as e:
+                    if self.running:
+                        self.log(f"Speaker playback error: {e}")
         except Exception as e:
-            print(f"❌ Speaker error: {e}")
+            if self.running:
+                print(f"❌ Speaker error: {e}")
         finally:
             with self.speaker_lock:
                 if self.speaker_stream:
@@ -215,74 +226,22 @@ class WyomingAudioBridge:
                     self.speaker_stream.close()
             print(f"🔊 Speaker stopped (played {self.received_chunks} chunks)")
     
-    def receive_thread(self):
-        """Receive events from gateway."""
-        print("📡 Starting receive thread...")
+    def connect(self):
+        """Connect to WebSocket gateway."""
+        ws_url = f"ws://{self.host}:{self.port}{self.path}"
+        print(f"Connecting to gateway at {ws_url}...")
         
-        try:
-            while self.running:
-                event = self.receive_event()
-                if event is None:
-                    print("⚠️  Connection closed by gateway")
-                    self.running = False
-                    break
-                
-                if event['type'] == 'audio-chunk':
-                    # Queue audio for playback
-                    self.recv_queue.put(event['payload'])
-                    self.received_chunks += 1
-                elif event['type'] == 'audio-start':
-                    # Parse audio format from event
-                    rate = event['data'].get('rate', SAMPLE_RATE)
-                    width = event['data'].get('width', SAMPLE_WIDTH)
-                    channels = event['data'].get('channels', CHANNELS)
-                    
-                    print(f"🔊 Gateway started sending audio at {rate}Hz!")
-                    print(f"   Audio format: {rate}Hz, {width*8}-bit, {channels}ch")
-                    
-                    # Initialize speaker stream with correct format
-                    with self.speaker_lock:
-                        # Close old stream if exists
-                        if self.speaker_stream:
-                            self.speaker_stream.stop_stream()
-                            self.speaker_stream.close()
-                        
-                        # Open new stream with correct format
-                        try:
-                            self.speaker_stream = self.audio.open(
-                                format=pyaudio.paInt16,
-                                channels=channels,
-                                rate=rate,
-                                output=True,
-                                frames_per_buffer=rate // 10  # 100ms buffer
-                            )
-                            print(f"✅ Speaker initialized at {rate}Hz")
-                        except Exception as e:
-                            print(f"❌ Failed to open speaker at {rate}Hz: {e}")
-                            self.speaker_stream = None
-                    
-                elif event['type'] == 'audio-stop':
-                    print("✅ Gateway finished sending audio")
-                else:
-                    print(f"📥 Received: {event['type']}")
-        except Exception as e:
-            if self.running:
-                print(f"❌ Receive error: {e}")
-        finally:
-            print("📡 Receive thread stopped")
+        # Create WebSocket connection
+        self.ws = websocket.WebSocketApp(
+            ws_url,
+            on_open=self.on_open,
+            on_message=self.on_message,
+            on_error=self.on_error,
+            on_close=self.on_close
+        )
     
     def run(self, duration=30):
         """Run the audio bridge for specified duration."""
-        self.running = True
-        
-        # Start threads
-        mic = threading.Thread(target=self.mic_thread, daemon=True)
-        speaker = threading.Thread(target=self.speaker_thread, daemon=True)
-        receiver = threading.Thread(target=self.receive_thread, daemon=True)
-        
-        mic.start()
-        speaker.start()
-        receiver.start()
         
         print(f"\n{'='*60}")
         print("🎙️  READY TO TEST!")
@@ -301,10 +260,19 @@ class WyomingAudioBridge:
             print("Press Ctrl+C to stop")
         print(f"{'='*60}\n")
         
+        # Run WebSocket in separate thread
+        ws_thread = threading.Thread(target=self.ws.run_forever, daemon=True)
+        ws_thread.start()
+        
+        # Wait for connection
+        time.sleep(1)
+        
         # Run for specified duration or until interrupted
         try:
+            start_time = time.time()
             if duration > 0:
-                time.sleep(duration)
+                while self.running and (time.time() - start_time) < duration:
+                    time.sleep(0.1)
             else:
                 # Run indefinitely
                 while self.running:
@@ -316,25 +284,25 @@ class WyomingAudioBridge:
         print("\nShutting down...")
         self.running = False
         
-        # Wait for threads to finish
-        mic.join(timeout=2)
-        speaker.join(timeout=2)
-        receiver.join(timeout=2)
+        if self.ws:
+            self.ws.close()
         
-        self.sock.close()
+        ws_thread.join(timeout=2)
+        
         self.audio.terminate()
         
         print(f"\n{'='*60}")
         print("📊 Session Statistics:")
         print(f"  Sent to gateway: {self.sent_chunks} audio chunks")
         print(f"  Received from gateway: {self.received_chunks} audio chunks")
+        print(f"  Final state: {self.current_state}")
         print(f"{'='*60}")
         print("✅ Session ended")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Wyoming Audio Bridge - Test gateway with laptop audio",
+        description="WebSocket Audio Bridge - Test gateway with laptop audio",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -350,6 +318,9 @@ Examples:
   # Connect to remote gateway
   python3 audio_bridge.py --host 192.168.1.100
   
+  # Custom WebSocket path
+  python3 audio_bridge.py --path /custom-path
+  
   # Enable debug logging
   python3 audio_bridge.py --verbose
         """
@@ -363,8 +334,13 @@ Examples:
     parser.add_argument(
         "--port",
         type=int,
-        default=10200,
-        help="Gateway Wyoming port (default: 10200)"
+        default=8080,
+        help="Gateway WebSocket port (default: 8080)"
+    )
+    parser.add_argument(
+        "--path",
+        default="/voice-stream",
+        help="WebSocket path (default: /voice-stream)"
     )
     parser.add_argument(
         "--duration",
@@ -381,24 +357,20 @@ Examples:
     args = parser.parse_args()
     
     print("=" * 60)
-    print("   Wyoming Audio Bridge - Gateway Test")
+    print("   WebSocket Audio Bridge - Gateway Test")
     print("=" * 60)
     print()
     
-    bridge = WyomingAudioBridge(
+    bridge = WebSocketAudioBridge(
         host=args.host,
         port=args.port,
+        path=args.path,
         verbose=args.verbose
     )
     
     try:
         bridge.connect()
         bridge.run(duration=args.duration)
-    except ConnectionRefusedError:
-        print(f"❌ Connection refused to {args.host}:{args.port}")
-        print("Make sure the gateway is running:")
-        print("  ./gateway")
-        sys.exit(1)
     except Exception as e:
         print(f"❌ Error: {e}")
         import traceback
@@ -408,4 +380,3 @@ Examples:
 
 if __name__ == "__main__":
     main()
-

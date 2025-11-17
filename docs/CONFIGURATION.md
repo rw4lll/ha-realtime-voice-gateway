@@ -82,16 +82,22 @@ OPENAI_API_KEY=sk-...
 OPENAI_REALTIME_MODEL=gpt-4o-realtime-preview-2024-12-17
 ```
 
-### Wyoming Protocol Configuration
+### WebSocket Server Configuration
 
 ```bash
 # ============================================
-# Wyoming Protocol Configuration
+# WebSocket Server Configuration
 # ============================================
-WYOMING_HOST=0.0.0.0
-WYOMING_STT_PORT=10200          # Device connects here for audio input
-WYOMING_TTS_PORT=10201          # Device connects here for audio output
+WEBSOCKET_ADDR=0.0.0.0:8080            # Listen address and port (required)
+WEBSOCKET_PATH=/voice-stream           # WebSocket endpoint path (required)
+WEBSOCKET_MAX_BUFFER_SIZE=32768        # Max WebSocket frame size (bytes)
+WEBSOCKET_READ_TIMEOUT=60              # Read timeout (seconds)
+WEBSOCKET_WRITE_TIMEOUT=10             # Write timeout (seconds)
 ```
+
+**Note:** The WebSocket server is always enabled - it's the gateway's core purpose.
+
+**WebSocket URL:** Devices connect to `ws://your-gateway-ip:8080/voice-stream`
 
 ### Home Assistant Integration
 
@@ -138,10 +144,10 @@ VAD_SPEECH_PAD_MS=300           # ms to wait after speech ends
 # ============================================
 # Session Management
 # ============================================
-SESSION_TIMEOUT=5m              # Idle timeout
-MAX_CONVERSATION_HISTORY=50     # Messages to keep in context
-MAX_CONCURRENT_SESSIONS=10      # Per gateway instance
-CLEANUP_INTERVAL=1m
+SESSION_SYSTEM_PROMPT="You are a helpful voice assistant for Home Assistant."
+SESSION_SAFETY_TIMEOUT=5m       # Max session duration (safety limit)
+SESSION_SILENCE_TIMEOUT=3s      # End conversation after silence
+SESSION_AUDIO_BUFFER_MS=500     # Audio buffering before playback (ms)
 ```
 
 ### Performance & Optimization
@@ -232,9 +238,13 @@ backend:
     retry_backoff: "1s"
     max_sessions: 5
 
-# Wyoming server
-wyoming:
-  address: "0.0.0.0:10200"
+# WebSocket server
+websocket:
+  address: "0.0.0.0:8080"
+  path: "/voice-stream"
+  max_buffer_size: 32768
+  read_timeout: 60
+  write_timeout: 10
 
 # Audio settings
 audio:
@@ -243,6 +253,9 @@ audio:
 # Session settings
 session:
   system_prompt: "You are a helpful voice assistant for Home Assistant."
+  safety_timeout: "5m"
+  silence_timeout: "3s"
+  audio_buffer_ms: 500
 
 # Logging
 logging:
@@ -264,35 +277,49 @@ observability:
     address: "0.0.0.0:8080"
 ```
 
-## Home Assistant Device Configuration
+## ESP32 Device Configuration
 
-Configure your Voice Preview device in Home Assistant to connect to the gateway:
+Configure your ESP32 voice device with modified streaming firmware to connect to the gateway:
 
-```yaml
-# configuration.yaml
+### Device Settings
 
-# Add Wyoming integration
-wyoming:
-  - uri: tcp://your-gateway-ip:10200
-    name: "Realtime Gateway STT"
-  
-  - uri: tcp://your-gateway-ip:10201
-    name: "Realtime Gateway TTS"
+Set the WebSocket gateway URL in your ESP32 device configuration:
 
-# Create assist pipeline
-assist_pipeline:
-  - name: "Realtime Voice"
-    stt_engine: wyoming.realtime_gateway_stt
-    tts_engine: wyoming.realtime_gateway_tts
-    conversation_agent: conversation.home_assistant
+```
+Gateway URL: ws://your-gateway-ip:8080/voice-stream
 ```
 
-Then in Home Assistant UI:
-1. Go to **Settings** → **Devices & Services** → **Wyoming**
-2. Verify the integration shows as connected
-3. Go to **Settings** → **Voice Assistants** → **Assist**
-4. Select your Voice Preview device
-5. Assign the "Realtime Voice" pipeline to the device
+**Examples:**
+- Local network: `ws://192.168.1.100:8080/voice-stream`
+- Docker network: `ws://ha-voice-gateway:8080/voice-stream`
+- With domain: `ws://voice-gateway.local:8080/voice-stream`
+
+### Entering Streaming Mode
+
+**Press the device button 4 times** to switch from standard Home Assistant Voice Preview mode to direct streaming mode.
+
+The device will:
+1. Close any existing Home Assistant pipeline connection
+2. Open WebSocket connection to gateway
+3. Start streaming audio directly to gateway
+4. Receive JSON state updates and audio responses
+
+### Troubleshooting Device Connection
+
+**Device won't connect:**
+```bash
+# Verify gateway is listening
+curl http://your-gateway-ip:8080/voice-stream
+# Should return "Upgrade Required" (WebSocket endpoint)
+
+# Check gateway logs
+docker logs -f ha-voice-gateway | grep "websocket"
+```
+
+**Device shows error:**
+- Verify gateway URL is correct (`ws://` not `http://`)
+- Check firewall allows port 8080
+- Ensure gateway is running: `docker ps | grep gateway`
 
 ## Configuration Examples
 
@@ -380,7 +407,8 @@ The gateway validates all configuration on startup and will fail fast if require
 ERROR: Configuration validation failed:
   - HA_URL is required when backend is not mock
   - GEMINI_API_KEY is required when backend is gemini
-  - WYOMING_STT_PORT must be between 1024 and 65535
+  - WEBSOCKET_ADDR must be a valid host:port address
+  - SESSION_SAFETY_TIMEOUT must be positive
 ```
 
 ## Environment Variable Substitution

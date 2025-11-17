@@ -1,16 +1,5 @@
-# Python dependencies for test scripts
+# Audio I/O
+pyaudio>=0.2.14
 
-# Wyoming protocol library for validation
-wyoming>=1.5.0
-
-# Audio bridge test (laptop mic/speaker testing)
-pyaudio>=0.2.13
-
-# Note: On macOS, you may need to install portaudio first:
-#   brew install portaudio
-#   pip install pyaudio
-#
-# On Linux:
-#   sudo apt-get install portaudio19-dev python3-pyaudio
-#   pip install pyaudio
-
+# WebSocket client
+websocket-client>=1.6.0

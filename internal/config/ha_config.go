@@ -13,7 +13,7 @@ import (
 type HAConfig struct {
 	HomeAssistant HomeAssistantYAML `yaml:"home_assistant"`
 	Backend       BackendYAML       `yaml:"backend"`
-	Wyoming       WyomingYAML       `yaml:"wyoming"`
+	WebSocket     WebSocketYAML     `yaml:"websocket"`
 	Audio         AudioYAML         `yaml:"audio"`
 	Session       SessionYAML       `yaml:"session"`
 	Logging       LoggingYAML       `yaml:"logging"`
@@ -88,9 +88,13 @@ type OpenAIYAML struct {
 	Model  string `yaml:"model"`
 }
 
-// WyomingYAML holds Wyoming server configuration.
-type WyomingYAML struct {
-	Address string `yaml:"address"`
+// WebSocketYAML holds WebSocket server configuration.
+type WebSocketYAML struct {
+	Address       string `yaml:"address"`
+	Path          string `yaml:"path"`
+	MaxBufferSize *int   `yaml:"max_buffer_size"`
+	ReadTimeout   *int   `yaml:"read_timeout"`
+	WriteTimeout  *int   `yaml:"write_timeout"`
 }
 
 // AudioYAML holds audio configuration.
@@ -265,11 +269,30 @@ func (c *Config) MergeWithEnv(yamlCfg *HAConfig) error {
 		c.Backend.GeminiTurnCoverage = yamlVal
 	}
 
-	// Wyoming
-	if addr := getEnv("WYOMING_ADDR", ""); addr != "" {
-		c.Wyoming.Address = addr
-	} else if yamlCfg.Wyoming.Address != "" {
-		c.Wyoming.Address = yamlCfg.Wyoming.Address
+	// WebSocket
+
+	if addr := getEnv("WEBSOCKET_ADDR", ""); addr != "" {
+		c.WebSocket.Address = addr
+	} else if yamlCfg.WebSocket.Address != "" {
+		c.WebSocket.Address = yamlCfg.WebSocket.Address
+	}
+
+	if path := getEnv("WEBSOCKET_PATH", ""); path != "" {
+		c.WebSocket.Path = path
+	} else if yamlCfg.WebSocket.Path != "" {
+		c.WebSocket.Path = yamlCfg.WebSocket.Path
+	}
+
+	if yamlCfg.WebSocket.MaxBufferSize != nil {
+		c.WebSocket.MaxBufferSize = *yamlCfg.WebSocket.MaxBufferSize
+	}
+
+	if yamlCfg.WebSocket.ReadTimeout != nil {
+		c.WebSocket.ReadTimeout = *yamlCfg.WebSocket.ReadTimeout
+	}
+
+	if yamlCfg.WebSocket.WriteTimeout != nil {
+		c.WebSocket.WriteTimeout = *yamlCfg.WebSocket.WriteTimeout
 	}
 
 	// Session

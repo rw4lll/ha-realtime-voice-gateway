@@ -13,7 +13,7 @@ import (
 	"github.com/rw4lll/ha-realtime-voice-gateway/internal/config"
 	"github.com/rw4lll/ha-realtime-voice-gateway/internal/ha"
 	"github.com/rw4lll/ha-realtime-voice-gateway/internal/pipeline"
-	"github.com/rw4lll/ha-realtime-voice-gateway/internal/protocol/wyoming"
+	"github.com/rw4lll/ha-realtime-voice-gateway/internal/websocket"
 	"go.uber.org/zap"
 )
 
@@ -35,11 +35,10 @@ func main() {
 
 	logger.Info("Starting Home Assistant Realtime Voice Gateway",
 		zap.String("backend", cfg.Backend.Type),
-		zap.String("wyoming_addr", cfg.Wyoming.Address),
 		zap.Bool("ha_enabled", cfg.HasHomeAssistant()))
 
 	// Initialize Home Assistant integration (if configured)
-	var toolExecutor pipeline.ToolExecutor
+	var toolExecutor *ha.Executor
 	var discoveredTools []backend.Tool
 	var systemPrompt string
 
@@ -67,7 +66,7 @@ func main() {
 			logger.Info("Successfully connected to Home Assistant")
 		}
 
-		// Autodiscovery (always enabled, just configure filtering)
+		// Autodiscovery
 		logger.Info("Starting Home Assistant autodiscovery",
 			zap.Int("allowed_domains", len(cfg.HomeAssistant.AutoDiscoveryDomains)),
 			zap.Int("denied_domains", len(cfg.HomeAssistant.AutoDiscoveryDenied)))
@@ -77,7 +76,7 @@ func main() {
 			Client:            haClient,
 			AllowedDomains:    cfg.HomeAssistant.AutoDiscoveryDomains,
 			DeniedDomains:     cfg.HomeAssistant.AutoDiscoveryDenied,
-			AllowedServices:   cfg.HomeAssistant.AllowList, // Service patterns filter
+			AllowedServices:   cfg.HomeAssistant.AllowList,
 			IncludeAttributes: cfg.HomeAssistant.AutoDiscoveryAttributes,
 			Logger:            logger,
 		})
@@ -115,7 +114,7 @@ func main() {
 			systemPrompt = cfg.Session.SystemPrompt
 		}
 
-		// Create tool executor with allow list from config
+		// Create tool executor
 		toolExecutor, err = ha.NewExecutor(ha.ExecutorConfig{
 			Client:    haClient,
 			AllowList: cfg.HomeAssistant.AllowList,
@@ -127,7 +126,7 @@ func main() {
 
 		logger.Info("Home Assistant integration ready",
 			zap.Int("tools_available", len(discoveredTools)),
-			zap.Int("allowed_services", len(toolExecutor.(*ha.Executor).GetAllowList())))
+			zap.Int("allowed_services", len(toolExecutor.GetAllowList())))
 	} else {
 		logger.Warn("Home Assistant not configured. Tool execution will be disabled.")
 		systemPrompt = cfg.Session.SystemPrompt
@@ -183,7 +182,7 @@ func main() {
 		if err := geminiBackend.Init(ctx, backend.Config{
 			APIKey:       cfg.Backend.GeminiAPIKey,
 			Model:        cfg.Backend.GeminiModel,
-			SystemPrompt: cfg.Session.SystemPrompt,
+			SystemPrompt: systemPrompt,
 			Extra:        extra,
 		}); err != nil {
 			logger.Fatal("Failed to initialize Gemini backend", zap.Error(err))
@@ -194,7 +193,7 @@ func main() {
 
 	case "openai":
 		logger.Fatal("OpenAI backend not yet implemented",
-			zap.String("note", "Coming in Phase 2"))
+			zap.String("note", "Coming soon"))
 
 	default:
 		logger.Fatal("Unknown backend type",
@@ -211,17 +210,16 @@ func main() {
 		}
 	}
 
-	// Create pipeline with autodiscovered system prompt
+	// Create pipeline
 	pipe, err := pipeline.NewPipeline(pipeline.Config{
-		Backend:                llmBackend,
-		Logger:                 logger,
-		SystemPrompt:           systemPrompt, // Use autodiscovered prompt if available
-		ToolExecutor:           toolExecutor,
-		AudioStartBufferMs:     cfg.Performance.AudioStartBufferMs,
-		EnableMetrics:          cfg.Performance.EnableMetrics,
-		SessionMode:            cfg.Session.Mode,
-		AutoCloseAfterResponse: cfg.Session.AutoCloseAfterResponse,
-		SessionResponseTimeout: time.Duration(cfg.Session.ResponseTimeoutMs) * time.Millisecond,
+		Backend:        llmBackend,
+		Logger:         logger,
+		ToolExecutor:   toolExecutor,
+		SystemPrompt:   systemPrompt,
+		AudioBufferMs:  cfg.Session.AudioBufferMs,
+		EnableMetrics:  cfg.Performance.EnableMetrics,
+		SafetyTimeout:  cfg.Session.SafetyTimeout,
+		SilenceTimeout: cfg.Session.SilenceTimeout,
 	})
 	if err != nil {
 		logger.Fatal("Failed to create pipeline", zap.Error(err))
@@ -230,123 +228,44 @@ func main() {
 
 	logger.Info("Pipeline initialized",
 		zap.Bool("ha_enabled", toolExecutor != nil),
-		zap.Int("audio_buffer", cfg.Performance.AudioBufferSize),
-		zap.Int("event_buffer", cfg.Performance.EventBufferSize),
-		zap.Int("audio_start_buffer_ms", cfg.Performance.AudioStartBufferMs),
-		zap.Bool("metrics_enabled", cfg.Performance.EnableMetrics),
-		zap.String("session_mode", cfg.Session.Mode),
-		zap.Bool("auto_close", cfg.Session.AutoCloseAfterResponse))
+		zap.Int("tools", len(discoveredTools)),
+		zap.Int("audio_buffer_ms", cfg.Session.AudioBufferMs),
+		zap.Duration("safety_timeout", cfg.Session.SafetyTimeout))
 
-	// Build service info from backend capabilities for Wyoming discovery
-	caps := llmBackend.Capabilities()
-	serviceInfo := &wyoming.ServiceInfo{
-		Name:        "ha-realtime-voice-gateway",
-		Version:     "1.0.0", // TODO: Get from build/version package
-		Description: "Home Assistant Realtime Voice Gateway - Wyoming Protocol Interface",
-	}
-	serviceInfo.Attribution.Name = "Sergei Shitikov"
-	serviceInfo.Attribution.URL = "https://github.com/rw4lll/ha-realtime-voice-gateway"
-
-	// Populate model info from backend capabilities
-	serviceInfo.Model.Name = cfg.Backend.GeminiModel // Use config model name
-	if caps.Provider == "gemini" {
-		serviceInfo.Model.Description = "Google Gemini - Multimodal Live API"
-		serviceInfo.Model.Attribution.Name = "Google"
-		serviceInfo.Model.Attribution.URL = "https://ai.google.dev/gemini-api/docs/multimodal-live"
-		serviceInfo.Model.Version = "2.0"
-		// Gemini supports many languages
-		serviceInfo.Model.Languages = []string{"en", "ru", "de", "fr", "es", "it", "ja", "ko", "zh", "pt", "nl", "pl", "tr"}
-	} else {
-		// Generic fallback for other backends
-		serviceInfo.Model.Description = fmt.Sprintf("%s Model", caps.Provider)
-		serviceInfo.Model.Attribution.Name = caps.Provider
-		serviceInfo.Model.Attribution.URL = "https://github.com/rw4lll/ha-realtime-voice-gateway"
-		serviceInfo.Model.Version = "1.0"
-		serviceInfo.Model.Languages = []string{"en"}
-	}
-
-	logger.Info("Service info configured",
-		zap.String("name", serviceInfo.Name),
-		zap.String("version", serviceInfo.Version),
-		zap.String("model", serviceInfo.Model.Name),
-		zap.Int("languages", len(serviceInfo.Model.Languages)))
-
-	// Create Wyoming server
-	sttServer := wyoming.NewServer(wyoming.ServerConfig{
-		Address:     cfg.Wyoming.Address,
-		Logger:      logger.With(zap.String("server", "Wyoming")),
-		ServiceInfo: serviceInfo,
-		OnSession: func(s *wyoming.Session) {
-			logger.Info("New Wyoming session connected",
+	// Create WebSocket server
+	wsServer := websocket.NewServer(websocket.ServerConfig{
+		Address:       cfg.WebSocket.Address,
+		Path:          cfg.WebSocket.Path,
+		ReadTimeout:   time.Duration(cfg.WebSocket.ReadTimeout) * time.Second,
+		WriteTimeout:  time.Duration(cfg.WebSocket.WriteTimeout) * time.Second,
+		MaxBufferSize: cfg.WebSocket.MaxBufferSize,
+		Logger:        logger.With(zap.String("server", "WebSocket")),
+		OnSession: func(s *websocket.Session) {
+			logger.Info("New WebSocket session connected",
 				zap.String("session_id", s.ID))
 
-			// Lazy pipeline initialization: wait for actual audio/commands
-			// before starting backend. This allows Home Assistant to discover
-			// services via describe handshake without spinning up Gemini sessions.
-			go func() {
-				for event := range s.Events {
-					if event.Type == wyoming.EventDescribe {
-						// Describe requests handled by session layer
-						continue
-					}
-
-					// Real command received - initialize pipeline now
-					logger.Info("Starting pipeline for session",
-						zap.String("session_id", s.ID),
-						zap.String("trigger_event", string(event.Type)))
-
-					pipe.HandleWyomingSession(s)
-					return
-				}
-			}()
+			// Handle session in pipeline
+			go pipe.HandleWebSocketSession(s)
 		},
 	})
 
-	if err := sttServer.Start(); err != nil {
-		logger.Fatal("Failed to start Wyoming server", zap.Error(err))
+	if err := wsServer.Start(); err != nil {
+		logger.Fatal("Failed to start WebSocket server", zap.Error(err))
 	}
-	defer sttServer.Close()
-
-	// Log actual backend capabilities (not config file values)
-	outputFormat := caps.SupportedAudioFormats[0] // Primary format
+	defer wsServer.Close()
 
 	logger.Info("Gateway ready",
-		zap.String("wyoming_addr", sttServer.Addr()),
+		zap.String("websocket_addr", cfg.WebSocket.Address),
+		zap.String("websocket_path", cfg.WebSocket.Path),
 		zap.Int("active_sessions", pipe.GetSessionCount()),
-		zap.String("backend", cfg.Backend.Type),
-		zap.Int("backend_output_rate", outputFormat.SampleRate),
-		zap.Int("backend_output_channels", outputFormat.Channels),
-		zap.Int("backend_output_bits", outputFormat.BitsPerSample))
-
-	// Start periodic metrics logger if metrics enabled
-	var metricsTicker *time.Ticker
-	var metricsStop chan struct{}
-	if cfg.Performance.EnableMetrics {
-		metricsTicker = time.NewTicker(60 * time.Second) // Log metrics every minute
-		metricsStop = make(chan struct{})
-		go func() {
-			for {
-				select {
-				case <-metricsTicker.C:
-					pipe.LogMetrics()
-				case <-metricsStop:
-					return
-				}
-			}
-		}()
-		logger.Info("Periodic metrics logging enabled (every 60 seconds)")
-	}
+		zap.String("backend", cfg.Backend.Type))
 
 	// Wait for interrupt signal
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
+	logger.Info("WebSocket server listening. Waiting for device connections...")
 	<-sigChan
-	logger.Info("Shutting down gracefully...")
 
-	// Stop metrics logger if running
-	if metricsTicker != nil {
-		metricsTicker.Stop()
-		close(metricsStop)
-	}
+	logger.Info("Shutting down gracefully...")
 }
